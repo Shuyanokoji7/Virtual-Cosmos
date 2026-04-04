@@ -1,66 +1,72 @@
-import React, { useState, useCallback } from 'react';
+import React from 'react';
+import { useCosmosStore } from './store';
+import { useSocket } from './hooks/useSocket';
 import LobbyScreen from './components/LobbyScreen';
 import CosmosCanvas from './components/CosmosCanvas';
-import ChatPanel from './components/ChatPanel';
 import StatusBar from './components/StatusBar';
+import ChatPanel from './components/ChatPanel';
+import GlobalChat from './components/GlobalChat';
 import UserList from './components/UserList';
-import { useSocket } from './hooks/useSocket';
+import VideoCallOverlay from './components/VideoCallOverlay';
+import CreateRoomModal from './components/CreateRoomModal';
+import Minimap from './components/Minimap';
 
-export default function App() {
-  const [username, setUsername] = useState('');
-  const [joined, setJoined] = useState(false);
+function App() {
+  const { isJoined, activeChatRoom, isGlobalChatOpen, activeCall } = useCosmosStore();
+  const { socket, emit, on, off } = useSocket();
+  const [showCreateRoom, setShowCreateRoom] = React.useState(false);
 
-  const {
-    socket,
-    myData,
-    otherUsers,
-    activeConnections,
-    chatMessages,
-    sendMessage,
-    sendPosition,
-  } = useSocket(joined, username);
-
-  const handleJoin = useCallback((name) => {
-    setUsername(name);
-    setJoined(true);
-  }, []);
-
-  if (!joined) {
-    return <LobbyScreen onJoin={handleJoin} />;
+  if (!isJoined) {
+    return <LobbyScreen emit={emit} />;
   }
 
   return (
-    <div className="w-full h-full relative overflow-hidden bg-cosmos-bg">
+    <div className="w-screen h-screen overflow-hidden bg-cosmos-bg relative">
       {/* Main Canvas */}
-      <CosmosCanvas
-        myData={myData}
-        otherUsers={otherUsers}
-        activeConnections={activeConnections}
-        onMove={sendPosition}
+      <CosmosCanvas emit={emit} socket={socket} />
+
+      {/* UI Overlay */}
+      <StatusBar 
+        onCreateRoom={() => setShowCreateRoom(true)} 
+        emit={emit}
       />
 
-      {/* Status Bar */}
-      <StatusBar
-        username={myData?.username}
-        userCount={otherUsers.length + 1}
-        connectionCount={activeConnections.length}
-      />
+      {/* User List Panel */}
+      <UserList emit={emit} socket={socket} />
 
-      {/* Online Users */}
-      <UserList users={otherUsers} myData={myData} />
-
-      {/* Chat Panels */}
-      {activeConnections.map((conn) => (
-        <ChatPanel
-          key={conn.roomId}
-          roomId={conn.roomId}
-          peerName={conn.peerName}
-          peerColor={conn.peerColor}
-          messages={chatMessages[conn.roomId] || []}
-          mySocketId={myData?.socketId}
-          onSend={(content) => sendMessage(conn.roomId, content)}
+      {/* Proximity Chat Panel */}
+      {activeChatRoom && (
+        <ChatPanel 
+          roomId={activeChatRoom}
+          emit={emit}
+          socket={socket}
         />
-      ))}
+      )}
+
+      {/* Global Chat Panel */}
+      {isGlobalChatOpen && (
+        <GlobalChat 
+          emit={emit}
+        />
+      )}
+
+      {/* Video Call Overlay */}
+      {activeCall && (
+        <VideoCallOverlay socket={socket} />
+      )}
+
+      {/* Create Room Modal */}
+      {showCreateRoom && (
+        <CreateRoomModal 
+          onClose={() => setShowCreateRoom(false)}
+          emit={emit}
+        />
+      )}
+
+      {/* Minimap */}
+      <Minimap />
     </div>
   );
 }
+
+export default App;

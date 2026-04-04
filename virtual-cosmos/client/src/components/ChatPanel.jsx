@@ -1,133 +1,207 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Send, X, Ban, Phone, Video, UserX } from 'lucide-react';
+import { useCosmosStore } from '../store';
+import { useWebRTC } from '../hooks/useWebRTC';
 
-export default function ChatPanel({ roomId, peerName, peerColor, messages, mySocketId, onSend }) {
-  const [input, setInput] = useState('');
-  const [minimized, setMinimized] = useState(false);
+const ChatPanel = ({ roomId, emit, socket }) => {
+  const [message, setMessage] = useState('');
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
+  const {
+    messages,
+    proximityUsers,
+    user,
+    blockedUsers,
+    setActiveChatRoom,
+    clearUnread,
+  } = useCosmosStore();
+
+  const { startCall } = useWebRTC(socket);
+
+  const chatMessages = messages[roomId] || [];
+  const connectedUser = proximityUsers[0];
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [chatMessages]);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (input.trim()) {
-      onSend(input);
-      setInput('');
-      inputRef.current?.focus();
+  useEffect(() => {
+    clearUnread(roomId);
+    emit('chat:read', { roomId });
+  }, [roomId, clearUnread, emit]);
+
+  const handleSend = () => {
+    if (!message.trim()) return;
+
+    emit('chat:message', {
+      roomId,
+      content: message.trim(),
+    });
+
+    setMessage('');
+    inputRef.current?.focus();
+  };
+
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
     }
   };
 
-  const formatTime = (ts) => {
-    const d = new Date(ts);
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const handleBlock = (userId) => {
+    emit('user:block', { targetUserId: userId });
+  };
+
+  const handleClose = () => {
+    setActiveChatRoom(null);
+  };
+
+  const handleVoiceCall = () => {
+    if (connectedUser) {
+      startCall(connectedUser.odestined, 'voice');
+    }
+  };
+
+  const handleVideoCall = () => {
+    if (connectedUser) {
+      startCall(connectedUser.odestined, 'video');
+    }
   };
 
   return (
-    <div className="absolute right-4 bottom-4 animate-slide-up z-50" style={{ width: '340px' }}>
-      <div className="bg-cosmos-surface/95 backdrop-blur-xl border border-cosmos-border rounded-2xl overflow-hidden shadow-2xl shadow-purple-900/20">
-        {/* Header */}
-        <div
-          className="flex items-center justify-between px-4 py-3 border-b border-cosmos-border/50 cursor-pointer hover:bg-cosmos-panel/50 transition-colors"
-          onClick={() => setMinimized(!minimized)}
-        >
-          <div className="flex items-center gap-3">
-            {/* Peer avatar dot */}
-            <div className="relative">
-              <div
-                className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white"
-                style={{ backgroundColor: peerColor }}
-              >
-                {peerName[0].toUpperCase()}
-              </div>
-              <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-400 border-2 border-cosmos-surface rounded-full" />
-            </div>
-            <div>
-              <div className="text-sm font-semibold text-white" style={{ fontFamily: 'Outfit, sans-serif' }}>
-                {peerName}
-              </div>
-              <div className="text-[10px] text-cosmos-success flex items-center gap-1">
-                <span className="w-1.5 h-1.5 bg-cosmos-success rounded-full animate-pulse" />
-                Connected
-              </div>
-            </div>
+    <motion.div
+      initial={{ opacity: 0, x: 50, scale: 0.95 }}
+      animate={{ opacity: 1, x: 0, scale: 1 }}
+      exit={{ opacity: 0, x: 50, scale: 0.95 }}
+      transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+      className="fixed right-4 bottom-4 w-96 h-[500px] glass-chat rounded-2xl flex flex-col overflow-hidden glow-chat"
+    >
+      {/* Header */}
+      <div className="bg-cosmos-chat-surface/80 px-4 py-3 flex items-center justify-between border-b border-cosmos-chat-border/30">
+        <div className="flex items-center gap-3">
+          <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse" />
+          <div>
+            <h3 className="font-display font-semibold text-cosmos-chat-text">
+              {connectedUser?.name || 'Proximity Chat'}
+            </h3>
+            <p className="text-xs text-cosmos-chat-accent/70">Connected nearby</p>
           </div>
-          <button className="text-cosmos-muted hover:text-white transition-colors p-1">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              {minimized ? (
-                <polyline points="18 15 12 9 6 15" />
-              ) : (
-                <polyline points="6 9 12 15 18 9" />
-              )}
-            </svg>
-          </button>
         </div>
+        <div className="flex items-center gap-2">
+          {connectedUser && (
+            <>
+              <motion.button
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.9 }}
+                onClick={handleVoiceCall}
+                className="p-2 rounded-lg bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-colors"
+                title="Voice Call"
+              >
+                <Phone className="w-4 h-4" />
+              </motion.button>
+              <motion.button
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.9 }}
+                onClick={handleVideoCall}
+                className="p-2 rounded-lg bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition-colors"
+                title="Video Call"
+              >
+                <Video className="w-4 h-4" />
+              </motion.button>
+              <motion.button
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.9 }}
+                onClick={() => handleBlock(connectedUser.odestined)}
+                className="p-2 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
+                title="Block User"
+              >
+                <Ban className="w-4 h-4" />
+              </motion.button>
+            </>
+          )}
+          <motion.button
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
+            onClick={handleClose}
+            className="p-2 rounded-lg bg-gray-500/20 text-gray-400 hover:bg-gray-500/30 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </motion.button>
+        </div>
+      </div>
 
-        {!minimized && (
-          <>
-            {/* Messages */}
-            <div className="h-64 overflow-y-auto px-4 py-3 space-y-2.5">
-              {messages.length === 0 && (
-                <div className="text-center py-8">
-                  <div className="text-2xl mb-2">👋</div>
-                  <p className="text-cosmos-muted text-xs">
-                    You're now connected with <span className="font-semibold text-cosmos-text">{peerName}</span>
-                  </p>
-                  <p className="text-cosmos-muted/50 text-[10px] mt-1">
-                    Say hello!
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 chat-scrollbar">
+        <AnimatePresence>
+          {chatMessages.map((msg, index) => {
+            const isOwn = msg.senderId === user?.odestined;
+            return (
+              <motion.div
+                key={msg.id || index}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
+              >
+                <div
+                  className={`max-w-[80%] rounded-2xl px-4 py-2 ${
+                    isOwn
+                      ? 'bg-cosmos-chat-accent text-white rounded-br-md'
+                      : 'bg-cosmos-chat-surface text-cosmos-chat-text rounded-bl-md'
+                  }`}
+                >
+                  {!isOwn && (
+                    <p className="text-xs font-medium text-cosmos-chat-accent mb-1">
+                      {msg.senderName}
+                    </p>
+                  )}
+                  <p className="text-sm break-words">{msg.content}</p>
+                  <p className={`text-xs mt-1 ${isOwn ? 'text-white/60' : 'text-gray-400'}`}>
+                    {new Date(msg.timestamp).toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
                   </p>
                 </div>
-              )}
-
-              {messages.map((msg, i) => {
-                const isMe = msg.senderId === mySocketId;
-                return (
-                  <div key={i} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                    <div
-                      className={`max-w-[75%] rounded-2xl px-3.5 py-2 ${
-                        isMe
-                          ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-br-md'
-                          : 'bg-cosmos-panel text-cosmos-text rounded-bl-md'
-                      }`}
-                    >
-                      <p className="text-sm leading-relaxed break-words">{msg.content}</p>
-                      <p className={`text-[9px] mt-1 ${isMe ? 'text-white/50' : 'text-cosmos-muted/50'} text-right`}>
-                        {formatTime(msg.timestamp)}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-              <div ref={messagesEndRef} />
-            </div>
-
-            {/* Input */}
-            <form onSubmit={handleSubmit} className="px-3 pb-3">
-              <div className="flex items-center gap-2 bg-cosmos-bg/60 rounded-xl border border-cosmos-border/50 px-3 py-1.5 focus-within:border-purple-500/40 transition-colors">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder="Type a message..."
-                  className="flex-1 bg-transparent text-sm text-white placeholder-cosmos-muted/40 outline-none py-1.5"
-                  maxLength={500}
-                />
-                <button
-                  type="submit"
-                  disabled={!input.trim()}
-                  className="p-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-30 disabled:hover:bg-purple-600 transition-all"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round">
-                    <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
-                  </svg>
-                </button>
-              </div>
-            </form>
-          </>
-        )}
+              </motion.div>
+            );
+          })}
+        </AnimatePresence>
+        <div ref={messagesEndRef} />
       </div>
-    </div>
+
+      {/* Input */}
+      <div className="p-4 bg-cosmos-chat-surface/50 border-t border-cosmos-chat-border/30">
+        <div className="flex gap-2">
+          <input
+            ref={inputRef}
+            type="text"
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyPress={handleKeyPress}
+            placeholder="Type a message..."
+            className="flex-1 px-4 py-3 bg-cosmos-chat-bg border border-cosmos-chat-border/50 rounded-xl text-cosmos-chat-text placeholder-gray-500 chat-input transition-all"
+          />
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={handleSend}
+            disabled={!message.trim()}
+            className={`px-4 py-3 rounded-xl font-medium transition-all ${
+              message.trim()
+                ? 'bg-cosmos-chat-accent text-white shadow-lg shadow-cosmos-chat-accent/30'
+                : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+            }`}
+          >
+            <Send className="w-5 h-5" />
+          </motion.button>
+        </div>
+      </div>
+    </motion.div>
   );
-}
+};
+
+export default ChatPanel;

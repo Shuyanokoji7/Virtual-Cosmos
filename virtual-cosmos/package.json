@@ -1,7 +1,7 @@
 {
   "name": "virtual-cosmos",
-  "version": "1.0.0",
-  "description": "2D virtual environment with proximity-based chat",
+  "version": "2.0.0",
+  "description": "2D virtual environment with proximity-based chat, video/voice calls, and custom rooms",
   "scripts": {
     "install:all": "cd server && npm install && cd ../client && npm install",
     "dev:server": "cd server && npm run dev",
@@ -9,6 +9,9 @@
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "build": "cd client && npm run build"
   },
-  "keywords": ["virtual-space", "real-time", "proximity-chat"],
-  "license": "MIT"
+  "keywords": ["virtual-space", "real-time", "proximity-chat", "video-chat", "voice-chat"],
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
 }

@@ -1,297 +1,632 @@
-require("dotenv").config();
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-const cors = require("cors");
-const mongoose = require("mongoose");
-const { v4: uuidv4 } = require("uuid");
+import express from 'express';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
+import cors from 'cors';
+import mongoose from 'mongoose';
+import dotenv from 'dotenv';
+import { v4 as uuidv4 } from 'uuid';
 
-// ─── Config ───────────────────────────────────────────────
-const PORT = process.env.PORT || 3001;
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/virtual-cosmos";
-const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5173";
-const PROXIMITY_RADIUS = parseInt(process.env.PROXIMITY_RADIUS) || 150;
+dotenv.config();
 
-// ─── MongoDB Models ───────────────────────────────────────
-mongoose
-  .connect(MONGODB_URI)
-  .then(() => console.log("✅ MongoDB connected"))
-  .catch((err) => console.log("⚠️  MongoDB not available, running without persistence:", err.message));
+const app = express();
+const httpServer = createServer(app);
 
-const userSchema = new mongoose.Schema({
-  odublin: { type: String, unique: true },
-  username: String,
-  avatarColor: String,
-  lastPosition: { x: Number, y: Number },
-  lastSeen: { type: Date, default: Date.now },
+const io = new Server(httpServer, {
+  cors: {
+    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    methods: ['GET', 'POST'],
+  },
 });
 
+app.use(cors());
+app.use(express.json());
+
+// MongoDB Connection
+const connectDB = async () => {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI);
+    console.log('✅ MongoDB connected');
+  } catch (err) {
+    console.warn('⚠️ MongoDB connection failed, running in memory-only mode');
+  }
+};
+connectDB();
+
+// MongoDB Schemas
 const messageSchema = new mongoose.Schema({
   roomId: String,
   senderId: String,
   senderName: String,
   content: String,
   timestamp: { type: Date, default: Date.now },
+  isGlobal: { type: Boolean, default: false },
 });
 
-const User = mongoose.model("User", userSchema);
-const Message = mongoose.model("Message", messageSchema);
-
-// ─── Express Setup ────────────────────────────────────────
-const app = express();
-app.use(cors({ origin: CLIENT_URL }));
-app.use(express.json());
-
-const server = http.createServer(app);
-
-// ─── Socket.IO Setup ─────────────────────────────────────
-const io = new Server(server, {
-  cors: { origin: CLIENT_URL, methods: ["GET", "POST"] },
+const userRoomSchema = new mongoose.Schema({
+  ownerId: String,
+  ownerName: String,
+  roomId: String,
+  roomName: String,
+  backgroundType: String,
+  createdAt: { type: Date, default: Date.now },
 });
 
-// ─── In-Memory State ─────────────────────────────────────
-const users = new Map();       // socketId -> { userId, username, x, y, avatarColor }
-const connections = new Map(); // sorted pair key -> { user1, user2, roomId }
+const Message = mongoose.model('Message', messageSchema);
+const UserRoom = mongoose.model('UserRoom', userRoomSchema);
 
-// ─── Helpers ─────────────────────────────────────────────
-function getDistance(a, b) {
-  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
-}
+// In-memory state
+const users = new Map(); // socketId -> user data
+const proximityConnections = new Map(); // pairKey -> { userIds, chatRoomId }
+const blockedUsers = new Map(); // odestined -> Set of blocked userIds
+const voteKicks = new Map(); // targetUserId -> Set of voter userIds
+const unreadMessages = new Map(); // odestined -> { roomId: count }
+const customRooms = new Map(); // odestined -> room data
 
-function pairKey(id1, id2) {
-  return [id1, id2].sort().join("::");
-}
-
-function generateRoomId(id1, id2) {
-  return `room_${pairKey(id1, id2)}`;
-}
-
-// Avatar colors pool
-const AVATAR_COLORS = [
-  "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEAA7",
-  "#DDA0DD", "#98D8C8", "#F7DC6F", "#BB8FCE", "#85C1E9",
-  "#F8C471", "#82E0AA", "#F1948A", "#AED6F1", "#D7BDE2",
+// Default rooms configuration
+const DEFAULT_ROOMS = [
+  {
+    id: 'lounge',
+    name: 'The Lounge',
+    x: 100,
+    y: 100,
+    width: 500,
+    height: 400,
+    backgroundType: 'cozy',
+    furniture: [
+      { type: 'sofa', x: 150, y: 200, rotation: 0, seats: 3 },
+      { type: 'chair', x: 400, y: 150, rotation: 45, seats: 1 },
+      { type: 'table', x: 280, y: 250, rotation: 0 },
+      { type: 'plant', x: 120, y: 350, rotation: 0 },
+      { type: 'lamp', x: 450, y: 350, rotation: 0 },
+    ],
+  },
+  {
+    id: 'meeting',
+    name: 'Meeting Room',
+    x: 700,
+    y: 100,
+    width: 450,
+    height: 350,
+    backgroundType: 'professional',
+    furniture: [
+      { type: 'desk', x: 850, y: 200, rotation: 0 },
+      { type: 'chair', x: 780, y: 200, rotation: 0, seats: 1 },
+      { type: 'chair', x: 920, y: 200, rotation: 180, seats: 1 },
+      { type: 'chair', x: 850, y: 130, rotation: 90, seats: 1 },
+      { type: 'chair', x: 850, y: 270, rotation: -90, seats: 1 },
+      { type: 'whiteboard', x: 1050, y: 180, rotation: 0 },
+    ],
+  },
+  {
+    id: 'cafe',
+    name: 'Cosmic Café',
+    x: 100,
+    y: 550,
+    width: 480,
+    height: 380,
+    backgroundType: 'warm',
+    furniture: [
+      { type: 'cafe_table', x: 200, y: 650, rotation: 0 },
+      { type: 'stool', x: 170, y: 650, rotation: 0, seats: 1 },
+      { type: 'stool', x: 230, y: 650, rotation: 0, seats: 1 },
+      { type: 'cafe_table', x: 380, y: 720, rotation: 0 },
+      { type: 'stool', x: 350, y: 720, rotation: 0, seats: 1 },
+      { type: 'stool', x: 410, y: 720, rotation: 0, seats: 1 },
+      { type: 'counter', x: 450, y: 580, rotation: 0 },
+      { type: 'plant', x: 120, y: 880, rotation: 0 },
+    ],
+  },
 ];
 
-function getRandomColor() {
-  return AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
-}
+const ROOM_BACKGROUNDS = ['cozy', 'professional', 'warm', 'cosmic', 'nature', 'minimal', 'retro', 'neon'];
 
-function getRandomSpawn() {
-  return {
-    x: 200 + Math.random() * 800,
-    y: 200 + Math.random() * 400,
-  };
-}
+const PROXIMITY_RADIUS = parseInt(process.env.PROXIMITY_RADIUS) || 150;
+const VOTE_KICK_THRESHOLD = 0.5; // 50% of online users needed
 
-// ─── Proximity Check ─────────────────────────────────────
-function checkProximity(socket) {
-  const currentUser = users.get(socket.id);
-  if (!currentUser) return;
+// Helper functions
+const createPairKey = (id1, id2) => [id1, id2].sort().join(':');
 
-  for (const [otherSocketId, otherUser] of users) {
-    if (otherSocketId === socket.id) continue;
+const calculateDistance = (pos1, pos2) => {
+  return Math.sqrt(Math.pow(pos1.x - pos2.x, 2) + Math.pow(pos1.y - pos2.y, 2));
+};
 
-    const dist = getDistance(currentUser, otherUser);
-    const key = pairKey(socket.id, otherSocketId);
-    const existing = connections.get(key);
+const isBlocked = (userId1, userId2) => {
+  const blocked1 = blockedUsers.get(userId1) || new Set();
+  const blocked2 = blockedUsers.get(userId2) || new Set();
+  return blocked1.has(userId2) || blocked2.has(userId1);
+};
 
-    if (dist < PROXIMITY_RADIUS && !existing) {
-      // Connect
-      const roomId = generateRoomId(socket.id, otherSocketId);
-      connections.set(key, {
-        user1: socket.id,
-        user2: otherSocketId,
-        roomId,
-      });
+const checkProximity = (user1, user2) => {
+  if (!user1 || !user2 || !user1.position || !user2.position) return;
+  if (isBlocked(user1.odestined, user2.odestined)) return;
 
-      const s1 = io.sockets.sockets.get(socket.id);
-      const s2 = io.sockets.sockets.get(otherSocketId);
-      if (s1) s1.join(roomId);
-      if (s2) s2.join(roomId);
+  const distance = calculateDistance(user1.position, user2.position);
+  const pairKey = createPairKey(user1.odestined, user2.odestined);
+  const existingConnection = proximityConnections.get(pairKey);
 
-      // Notify both users
-      io.to(socket.id).emit("proximity:connect", {
-        peerId: otherSocketId,
-        peerName: otherUser.username,
-        peerColor: otherUser.avatarColor,
-        roomId,
-      });
-      io.to(otherSocketId).emit("proximity:connect", {
-        peerId: socket.id,
-        peerName: currentUser.username,
-        peerColor: currentUser.avatarColor,
-        roomId,
-      });
+  if (distance < PROXIMITY_RADIUS && !existingConnection) {
+    // Create proximity connection
+    const chatRoomId = `proximity:${pairKey}`;
+    proximityConnections.set(pairKey, {
+      userIds: [user1.odestined, user2.odestined],
+      chatRoomId,
+    });
 
-      // Send recent messages for this room
-      Message.find({ roomId })
-        .sort({ timestamp: -1 })
-        .limit(50)
-        .then((msgs) => {
-          const history = msgs.reverse().map((m) => ({
-            senderId: m.senderId,
-            senderName: m.senderName,
-            content: m.content,
-            timestamp: m.timestamp,
-          }));
-          io.to(socket.id).emit("chat:history", { roomId, messages: history });
-          io.to(otherSocketId).emit("chat:history", { roomId, messages: history });
-        })
-        .catch(() => {});
-    } else if (dist >= PROXIMITY_RADIUS && existing) {
-      // Disconnect
-      const s1 = io.sockets.sockets.get(existing.user1);
-      const s2 = io.sockets.sockets.get(existing.user2);
-      if (s1) s1.leave(existing.roomId);
-      if (s2) s2.leave(existing.roomId);
+    // Notify both users
+    io.to(user1.socketId).emit('proximity:connect', {
+      userId: user2.odestined,
+      userName: user2.name,
+      chatRoomId,
+    });
+    io.to(user2.socketId).emit('proximity:connect', {
+      userId: user1.odestined,
+      userName: user1.name,
+      chatRoomId,
+    });
 
-      io.to(existing.user1).emit("proximity:disconnect", {
-        peerId: existing.user2,
-        roomId: existing.roomId,
-      });
-      io.to(existing.user2).emit("proximity:disconnect", {
-        peerId: existing.user1,
-        roomId: existing.roomId,
-      });
+    // Send chat history
+    sendChatHistory(chatRoomId, [user1.socketId, user2.socketId]);
+  } else if (distance >= PROXIMITY_RADIUS && existingConnection) {
+    // Remove proximity connection
+    proximityConnections.delete(pairKey);
 
-      connections.delete(key);
-    }
+    io.to(user1.socketId).emit('proximity:disconnect', { userId: user2.odestined });
+    io.to(user2.socketId).emit('proximity:disconnect', { userId: user1.odestined });
   }
-}
+};
 
-// ─── Socket Events ───────────────────────────────────────
-io.on("connection", (socket) => {
-  console.log(`🔌 Connected: ${socket.id}`);
+const sendChatHistory = async (roomId, socketIds) => {
+  try {
+    const messages = await Message.find({ roomId })
+      .sort({ timestamp: -1 })
+      .limit(50)
+      .lean();
+    
+    socketIds.forEach(socketId => {
+      io.to(socketId).emit('chat:history', {
+        roomId,
+        messages: messages.reverse(),
+      });
+    });
+  } catch (err) {
+    console.warn('Could not fetch chat history');
+  }
+};
+
+const getAllRooms = async () => {
+  const userRoomsFromDB = [];
+  try {
+    const dbRooms = await UserRoom.find().lean();
+    dbRooms.forEach(room => {
+      userRoomsFromDB.push({
+        id: room.roomId,
+        name: room.roomName,
+        ownerId: room.ownerId,
+        ownerName: room.ownerName,
+        backgroundType: room.backgroundType,
+        isCustom: true,
+        x: 700 + Math.random() * 200,
+        y: 550 + Math.random() * 100,
+        width: 400,
+        height: 350,
+        furniture: generateRandomFurniture(),
+      });
+    });
+  } catch (err) {
+    // Use in-memory rooms
+    customRooms.forEach(room => userRoomsFromDB.push(room));
+  }
+  return [...DEFAULT_ROOMS, ...userRoomsFromDB];
+};
+
+const generateRandomFurniture = () => {
+  const furnitureTypes = ['chair', 'sofa', 'table', 'plant', 'lamp'];
+  const furniture = [];
+  const count = 3 + Math.floor(Math.random() * 3);
+  
+  for (let i = 0; i < count; i++) {
+    furniture.push({
+      type: furnitureTypes[Math.floor(Math.random() * furnitureTypes.length)],
+      x: 50 + Math.random() * 300,
+      y: 50 + Math.random() * 200,
+      rotation: Math.random() * 360,
+      seats: Math.random() > 0.5 ? 1 : 0,
+    });
+  }
+  return furniture;
+};
+
+// Socket.IO events
+io.on('connection', (socket) => {
+  console.log(`🔌 Socket connected: ${socket.id}`);
 
   // User joins the cosmos
-  socket.on("user:join", (data) => {
-    const spawn = getRandomSpawn();
-    const userData = {
-      userId: data.userId || uuidv4(),
-      username: data.username || `User_${socket.id.slice(0, 4)}`,
-      avatarColor: data.avatarColor || getRandomColor(),
-      x: spawn.x,
-      y: spawn.y,
+  socket.on('user:join', async (data) => {
+    const odestined = data.odestined || uuidv4();
+    const user = {
+      socketId: socket.id,
+      odestined,
+      name: data.name,
+      avatar: data.avatar || { color: '#6366f1', style: 'default' },
+      position: {
+        x: 300 + Math.random() * 200,
+        y: 300 + Math.random() * 200,
+      },
+      direction: 'down',
+      isSitting: false,
+      sittingOn: null,
+      currentRoom: null,
     };
 
-    users.set(socket.id, userData);
+    users.set(socket.id, user);
+    blockedUsers.set(odestined, new Set());
+    unreadMessages.set(odestined, {});
 
-    // Persist to MongoDB
-    User.findOneAndUpdate(
-      { odublin: userData.userId },
-      {
-        username: userData.username,
-        avatarColor: userData.avatarColor,
-        lastPosition: { x: userData.x, y: userData.y },
-        lastSeen: new Date(),
-      },
-      { upsert: true }
-    ).catch(() => {});
-
-    // Send back user data
-    socket.emit("user:joined", {
-      socketId: socket.id,
-      ...userData,
+    // Send confirmation to joining user
+    socket.emit('user:joined', {
+      ...user,
+      rooms: await getAllRooms(),
+      backgroundTypes: ROOM_BACKGROUNDS,
     });
 
-    // Send existing users to the new user
+    // Send existing users to new user
     const existingUsers = [];
-    for (const [sid, u] of users) {
+    users.forEach((u, sid) => {
       if (sid !== socket.id) {
-        existingUsers.push({ socketId: sid, ...u });
+        existingUsers.push(u);
       }
-    }
-    socket.emit("users:existing", existingUsers);
+    });
+    socket.emit('users:existing', existingUsers);
 
     // Broadcast new user to others
-    socket.broadcast.emit("user:new", {
-      socketId: socket.id,
-      ...userData,
-    });
+    socket.broadcast.emit('user:new', user);
 
-    console.log(`👤 ${userData.username} joined the cosmos`);
+    // Send global chat history
+    sendChatHistory('global', [socket.id]);
   });
 
   // User moves
-  socket.on("user:move", (data) => {
+  socket.on('user:move', (data) => {
     const user = users.get(socket.id);
     if (!user) return;
 
-    user.x = data.x;
-    user.y = data.y;
+    user.position = data.position;
+    user.direction = data.direction;
+    user.isSitting = false;
+    user.sittingOn = null;
 
-    // Broadcast position
-    socket.broadcast.emit("user:moved", {
-      socketId: socket.id,
-      x: data.x,
-      y: data.y,
+    // Broadcast movement
+    socket.broadcast.emit('user:moved', {
+      odestined: user.odestined,
+      position: user.position,
+      direction: user.direction,
+      isSitting: false,
     });
 
-    // Check proximity
-    checkProximity(socket);
+    // Check proximity with all other users
+    users.forEach((otherUser, otherSocketId) => {
+      if (otherSocketId !== socket.id) {
+        checkProximity(user, otherUser);
+      }
+    });
   });
 
-  // Chat message
-  socket.on("chat:message", (data) => {
+  // User sits on furniture
+  socket.on('user:sit', (data) => {
     const user = users.get(socket.id);
     if (!user) return;
 
-    const msg = {
-      senderId: socket.id,
-      senderName: user.username,
+    user.isSitting = true;
+    user.sittingOn = data.furnitureId;
+    user.position = data.position;
+
+    socket.broadcast.emit('user:sat', {
+      odestined: user.odestined,
+      position: user.position,
+      furnitureId: data.furnitureId,
+      isSitting: true,
+    });
+  });
+
+  // User stands up
+  socket.on('user:stand', () => {
+    const user = users.get(socket.id);
+    if (!user) return;
+
+    user.isSitting = false;
+    user.sittingOn = null;
+
+    socket.broadcast.emit('user:stood', {
+      odestined: user.odestined,
+      isSitting: false,
+    });
+  });
+
+  // Chat message (proximity or room-based)
+  socket.on('chat:message', async (data) => {
+    const user = users.get(socket.id);
+    if (!user) return;
+
+    const message = {
+      id: uuidv4(),
+      roomId: data.roomId,
+      senderId: user.odestined,
+      senderName: user.name,
       content: data.content,
       timestamp: new Date(),
+      isGlobal: data.roomId === 'global',
     };
 
-    // Save to MongoDB
-    new Message({ ...msg, roomId: data.roomId }).save().catch(() => {});
+    // Save to database
+    try {
+      await new Message(message).save();
+    } catch (err) {
+      // Continue without persistence
+    }
 
-    // Broadcast to room
-    io.to(data.roomId).emit("chat:message", {
-      roomId: data.roomId,
-      ...msg,
+    if (data.roomId === 'global') {
+      // Global chat - send to everyone
+      io.emit('chat:message', message);
+      
+      // Update unread counts for users not viewing global chat
+      users.forEach((u, sid) => {
+        if (sid !== socket.id) {
+          const unread = unreadMessages.get(u.odestined) || {};
+          unread.global = (unread.global || 0) + 1;
+          unreadMessages.set(u.odestined, unread);
+          io.to(sid).emit('chat:unread', { roomId: 'global', count: unread.global });
+        }
+      });
+    } else if (data.roomId.startsWith('proximity:')) {
+      // Proximity chat
+      const pairKey = data.roomId.replace('proximity:', '');
+      const connection = proximityConnections.get(pairKey);
+      
+      if (connection) {
+        connection.userIds.forEach(odestined => {
+          const targetUser = [...users.values()].find(u => u.odestined === odestined);
+          if (targetUser && !isBlocked(user.odestined, odestined)) {
+            io.to(targetUser.socketId).emit('chat:message', message);
+          }
+        });
+      }
+    } else if (data.roomId.startsWith('room:')) {
+      // Room-specific chat
+      const roomId = data.roomId;
+      
+      // Find all users in this room
+      users.forEach((u, sid) => {
+        if (u.currentRoom === roomId.replace('room:', '')) {
+          io.to(sid).emit('chat:message', message);
+          
+          if (sid !== socket.id) {
+            const unread = unreadMessages.get(u.odestined) || {};
+            unread[roomId] = (unread[roomId] || 0) + 1;
+            unreadMessages.set(u.odestined, unread);
+            io.to(sid).emit('chat:unread', { roomId, count: unread[roomId] });
+          }
+        }
+      });
+    }
+  });
+
+  // Mark messages as read
+  socket.on('chat:read', (data) => {
+    const user = users.get(socket.id);
+    if (!user) return;
+
+    const unread = unreadMessages.get(user.odestined) || {};
+    unread[data.roomId] = 0;
+    unreadMessages.set(user.odestined, unread);
+  });
+
+  // User enters a room
+  socket.on('room:enter', (data) => {
+    const user = users.get(socket.id);
+    if (!user) return;
+
+    user.currentRoom = data.roomId;
+    socket.join(`room:${data.roomId}`);
+    
+    // Send room chat history
+    sendChatHistory(`room:${data.roomId}`, [socket.id]);
+  });
+
+  // User leaves a room
+  socket.on('room:leave', (data) => {
+    const user = users.get(socket.id);
+    if (!user) return;
+
+    user.currentRoom = null;
+    socket.leave(`room:${data.roomId}`);
+  });
+
+  // Create custom room
+  socket.on('room:create', async (data) => {
+    const user = users.get(socket.id);
+    if (!user) return;
+
+    // Check if user already has a room
+    const existingRoom = await UserRoom.findOne({ ownerId: user.odestined });
+    if (existingRoom) {
+      socket.emit('room:error', { message: 'You can only create one room' });
+      return;
+    }
+
+    const room = {
+      id: `custom:${uuidv4()}`,
+      roomId: `custom:${uuidv4()}`,
+      name: data.name,
+      roomName: data.name,
+      ownerId: user.odestined,
+      ownerName: user.name,
+      backgroundType: data.backgroundType || 'cosmic',
+      isCustom: true,
+      x: 700 + Math.random() * 200,
+      y: 550 + Math.random() * 100,
+      width: 400,
+      height: 350,
+      furniture: generateRandomFurniture(),
+    };
+
+    try {
+      await new UserRoom(room).save();
+    } catch (err) {
+      customRooms.set(user.odestined, room);
+    }
+
+    // Broadcast new room to all users
+    io.emit('room:created', room);
+    socket.emit('room:create:success', room);
+  });
+
+  // Block user
+  socket.on('user:block', (data) => {
+    const user = users.get(socket.id);
+    if (!user) return;
+
+    const blocked = blockedUsers.get(user.odestined) || new Set();
+    blocked.add(data.targetUserId);
+    blockedUsers.set(user.odestined, blocked);
+
+    // Remove any existing proximity connection
+    users.forEach((otherUser) => {
+      if (otherUser.odestined === data.targetUserId) {
+        const pairKey = createPairKey(user.odestined, otherUser.odestined);
+        if (proximityConnections.has(pairKey)) {
+          proximityConnections.delete(pairKey);
+          io.to(user.socketId).emit('proximity:disconnect', { userId: otherUser.odestined });
+          io.to(otherUser.socketId).emit('proximity:disconnect', { userId: user.odestined });
+        }
+      }
     });
+
+    socket.emit('user:blocked', { userId: data.targetUserId });
+  });
+
+  // Unblock user
+  socket.on('user:unblock', (data) => {
+    const user = users.get(socket.id);
+    if (!user) return;
+
+    const blocked = blockedUsers.get(user.odestined) || new Set();
+    blocked.delete(data.targetUserId);
+    blockedUsers.set(user.odestined, blocked);
+
+    socket.emit('user:unblocked', { userId: data.targetUserId });
+  });
+
+  // Vote kick
+  socket.on('vote:kick', (data) => {
+    const user = users.get(socket.id);
+    if (!user) return;
+
+    const targetUserId = data.targetUserId;
+    const votes = voteKicks.get(targetUserId) || new Set();
+    votes.add(user.odestined);
+    voteKicks.set(targetUserId, votes);
+
+    const onlineCount = users.size;
+    const voteCount = votes.size;
+    const threshold = Math.ceil(onlineCount * VOTE_KICK_THRESHOLD);
+
+    // Broadcast vote update
+    io.emit('vote:update', {
+      targetUserId,
+      voteCount,
+      threshold,
+      voters: [...votes],
+    });
+
+    if (voteCount >= threshold) {
+      // Kick the user
+      const targetUser = [...users.values()].find(u => u.odestined === targetUserId);
+      if (targetUser) {
+        io.to(targetUser.socketId).emit('user:kicked', {
+          reason: 'You have been removed by community vote',
+        });
+        
+        // Force disconnect
+        const targetSocket = io.sockets.sockets.get(targetUser.socketId);
+        if (targetSocket) {
+          targetSocket.disconnect(true);
+        }
+      }
+      voteKicks.delete(targetUserId);
+    }
+  });
+
+  // WebRTC signaling for video/voice chat
+  socket.on('webrtc:offer', (data) => {
+    const targetUser = [...users.values()].find(u => u.odestined === data.targetUserId);
+    if (targetUser && !isBlocked(users.get(socket.id)?.odestined, targetUser.odestined)) {
+      io.to(targetUser.socketId).emit('webrtc:offer', {
+        offer: data.offer,
+        fromUserId: users.get(socket.id)?.odestined,
+        fromUserName: users.get(socket.id)?.name,
+        type: data.type, // 'video' or 'voice'
+      });
+    }
+  });
+
+  socket.on('webrtc:answer', (data) => {
+    const targetUser = [...users.values()].find(u => u.odestined === data.targetUserId);
+    if (targetUser) {
+      io.to(targetUser.socketId).emit('webrtc:answer', {
+        answer: data.answer,
+        fromUserId: users.get(socket.id)?.odestined,
+      });
+    }
+  });
+
+  socket.on('webrtc:ice-candidate', (data) => {
+    const targetUser = [...users.values()].find(u => u.odestined === data.targetUserId);
+    if (targetUser) {
+      io.to(targetUser.socketId).emit('webrtc:ice-candidate', {
+        candidate: data.candidate,
+        fromUserId: users.get(socket.id)?.odestined,
+      });
+    }
+  });
+
+  socket.on('webrtc:end', (data) => {
+    const targetUser = [...users.values()].find(u => u.odestined === data.targetUserId);
+    if (targetUser) {
+      io.to(targetUser.socketId).emit('webrtc:end', {
+        fromUserId: users.get(socket.id)?.odestined,
+      });
+    }
   });
 
   // Disconnect
-  socket.on("disconnect", () => {
+  socket.on('disconnect', () => {
     const user = users.get(socket.id);
-    if (!user) return;
+    if (user) {
+      // Clean up proximity connections
+      proximityConnections.forEach((connection, pairKey) => {
+        if (connection.userIds.includes(user.odestined)) {
+          const otherUserId = connection.userIds.find(id => id !== user.odestined);
+          const otherUser = [...users.values()].find(u => u.odestined === otherUserId);
+          if (otherUser) {
+            io.to(otherUser.socketId).emit('proximity:disconnect', { userId: user.odestined });
+          }
+          proximityConnections.delete(pairKey);
+        }
+      });
 
-    // Clean up connections
-    for (const [key, conn] of connections) {
-      if (conn.user1 === socket.id || conn.user2 === socket.id) {
-        const otherId = conn.user1 === socket.id ? conn.user2 : conn.user1;
-        io.to(otherId).emit("proximity:disconnect", {
-          peerId: socket.id,
-          roomId: conn.roomId,
-        });
-        connections.delete(key);
-      }
+      // Clear vote kicks for this user
+      voteKicks.forEach((votes, targetId) => {
+        votes.delete(user.odestined);
+      });
+
+      users.delete(socket.id);
+      io.emit('user:left', { odestined: user.odestined });
     }
-
-    users.delete(socket.id);
-    io.emit("user:left", { socketId: socket.id });
-    console.log(`👋 ${user.username} left the cosmos`);
+    console.log(`🔌 Socket disconnected: ${socket.id}`);
   });
 });
 
-// ─── REST Endpoints ──────────────────────────────────────
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", users: users.size });
-});
-
-app.get("/api/users/online", (req, res) => {
-  const online = [];
-  for (const [sid, u] of users) {
-    online.push({ socketId: sid, username: u.username, avatarColor: u.avatarColor });
-  }
-  res.json(online);
-});
-
-// ─── Start Server ────────────────────────────────────────
-server.listen(PORT, () => {
-  console.log(`🚀 Virtual Cosmos server running on port ${PORT}`);
-  console.log(`📡 Proximity radius: ${PROXIMITY_RADIUS}px`);
+const PORT = process.env.PORT || 3001;
+httpServer.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
