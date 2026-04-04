@@ -1,0 +1,14 @@
+{
+  "name": "virtual-cosmos",
+  "version": "1.0.0",
+  "description": "2D virtual environment with proximity-based chat",
+  "scripts": {
+    "install:all": "cd server && npm install && cd ../client && npm install",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "build": "cd client && npm run build"
+  },
+  "keywords": ["virtual-space", "real-time", "proximity-chat"],
+  "license": "MIT"
+}
