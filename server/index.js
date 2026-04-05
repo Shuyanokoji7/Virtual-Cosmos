@@ -11,14 +11,32 @@ dotenv.config();
 const app = express();
 const httpServer = createServer(app);
 
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://virtual-cosmos-teal.vercel.app",
+  "https://virtual-cosmos-git-master-bhavyas-projects-54118bcd.vercel.app"
+];
+
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
-    methods: ['GET', 'POST'],
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("CORS blocked: " + origin));
+      }
+    },
+    methods: ["GET", "POST"],
+    credentials: true,
   },
 });
 
-app.use(cors());
+
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true,
+}));
+
 app.use(express.json());
 
 // MongoDB Connection
