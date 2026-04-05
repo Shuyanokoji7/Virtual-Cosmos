@@ -1,668 +1,213 @@
-import React, { useEffect, useRef, useCallback, useState } from 'react';
-import * as PIXI from 'pixi.js';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useCosmosStore } from '../store';
 
-const WORLD_WIDTH = 1600;
-const WORLD_HEIGHT = 1200;
-const MOVE_SPEED = 4;
-const PROXIMITY_RADIUS = 150;
+const MOVE_SPEED = 5;
+const CANVAS_WIDTH = 2000;
+const CANVAS_HEIGHT = 1500;
 
-// Furniture configurations
-const FURNITURE_CONFIG = {
-  chair: { width: 40, height: 50, canSit: true, seatOffset: { x: 0, y: -10 } },
-  sofa: { width: 100, height: 50, canSit: true, seats: 3, seatOffset: { x: 0, y: -5 } },
-  stool: { width: 30, height: 35, canSit: true, seatOffset: { x: 0, y: -8 } },
-  table: { width: 80, height: 60, canSit: false },
-  desk: { width: 120, height: 60, canSit: false },
-  cafe_table: { width: 50, height: 50, canSit: false },
-  plant: { width: 30, height: 50, canSit: false },
-  lamp: { width: 25, height: 60, canSit: false },
-  whiteboard: { width: 100, height: 70, canSit: false },
-  counter: { width: 150, height: 40, canSit: false },
+// Avatar component rendered on canvas
+const Avatar = ({ user, isCurrentUser, onClick }) => {
+  const getShapeStyle = () => {
+    const style = user.avatar?.style || 'default';
+    switch (style) {
+      case 'round': return 'rounded-full';
+      case 'square': return 'rounded-md';
+      case 'hexagon': return 'rounded-xl';
+      default: return 'rounded-2xl';
+    }
+  };
+
+  const color = user.avatar?.color || '#6366f1';
+
+  return (
+    <div
+      className={`absolute transition-all duration-100 cursor-pointer ${isCurrentUser ? 'z-20' : 'z-10'}`}
+      style={{
+        left: user.position?.x - 24,
+        top: user.position?.y - 24,
+        transform: user.isSitting ? 'scale(0.9)' : 'scale(1)',
+      }}
+      onClick={() => !isCurrentUser && onClick?.(user)}
+    >
+      {/* Proximity ring for current user */}
+      {isCurrentUser && (
+        <div
+          className="absolute -inset-16 rounded-full border-2 border-violet-400/30 proximity-ring"
+          style={{ borderColor: `${color}40` }}
+        />
+      )}
+      
+      {/* Avatar body */}
+      <div
+        className={`w-12 h-12 ${getShapeStyle()} flex items-center justify-center shadow-lg transition-all duration-200 ${
+          isCurrentUser ? 'ring-2 ring-white' : ''
+        }`}
+        style={{
+          background: `linear-gradient(135deg, ${color} 0%, ${color}bb 100%)`,
+          boxShadow: `0 0 ${isCurrentUser ? '20px' : '10px'} ${color}50`,
+        }}
+      >
+        {/* Face */}
+        <div className="relative w-8 h-8">
+          {/* Eyes */}
+          <div className="absolute top-1.5 left-1 w-2 h-2 bg-white rounded-full">
+            <div className="absolute top-0.5 left-0.5 w-1 h-1 bg-gray-800 rounded-full" />
+          </div>
+          <div className="absolute top-1.5 right-1 w-2 h-2 bg-white rounded-full">
+            <div className="absolute top-0.5 left-0.5 w-1 h-1 bg-gray-800 rounded-full" />
+          </div>
+          {/* Mouth */}
+          <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 w-4 h-1.5 border-b-2 border-white rounded-b-full" />
+        </div>
+      </div>
+      
+      {/* Name tag */}
+      <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 whitespace-nowrap">
+        <span className="px-2 py-0.5 bg-black/60 rounded-full text-xs text-white font-medium">
+          {user.name}
+          {isCurrentUser && ' (You)'}
+        </span>
+      </div>
+
+      {/* Direction indicator */}
+      {!user.isSitting && (
+        <div
+          className="absolute w-2 h-2 bg-white rounded-full"
+          style={{
+            top: user.direction === 'up' ? -4 : user.direction === 'down' ? 'auto' : '50%',
+            bottom: user.direction === 'down' ? -4 : 'auto',
+            left: user.direction === 'left' ? -4 : user.direction === 'right' ? 'auto' : '50%',
+            right: user.direction === 'right' ? -4 : 'auto',
+            transform: ['up', 'down'].includes(user.direction) ? 'translateX(-50%)' : 'translateY(-50%)',
+          }}
+        />
+      )}
+    </div>
+  );
 };
 
-// Room background colors
-const ROOM_COLORS = {
-  cozy: { floor: 0x2d1b4e, wall: 0x3d2b5e, accent: 0x8b5cf6 },
-  professional: { floor: 0x1e3a5f, wall: 0x2e4a6f, accent: 0x3b82f6 },
-  warm: { floor: 0x4a2c2a, wall: 0x5a3c3a, accent: 0xf97316 },
-  cosmic: { floor: 0x1a0a2e, wall: 0x2a1a3e, accent: 0xa855f7 },
-  nature: { floor: 0x1a3a2d, wall: 0x2a4a3d, accent: 0x22c55e },
-  minimal: { floor: 0x2a2a2a, wall: 0x3a3a3a, accent: 0x94a3b8 },
-  retro: { floor: 0x4a3a2a, wall: 0x5a4a3a, accent: 0xeab308 },
-  neon: { floor: 0x0a1a2e, wall: 0x1a2a3e, accent: 0xec4899 },
+// Room component
+const Room = ({ room, onEnter, isInside }) => {
+  const bgClass = `room-bg-${room.backgroundType || 'cosmic'}`;
+  
+  return (
+    <div
+      className={`absolute ${bgClass} rounded-2xl border-2 transition-all duration-300 ${
+        isInside ? 'border-violet-400 shadow-lg' : 'border-violet-400/30'
+      }`}
+      style={{
+        left: room.x,
+        top: room.y,
+        width: room.width,
+        height: room.height,
+      }}
+    >
+      {/* Room name */}
+      <div className="absolute -top-8 left-4 px-3 py-1 bg-cosmos-surface/80 rounded-lg text-sm font-medium text-violet-300">
+        {room.name}
+        {room.isCustom && (
+          <span className="ml-2 text-xs text-gray-400">by {room.ownerName}</span>
+        )}
+      </div>
+
+      {/* Furniture */}
+      {room.furniture?.map((item, idx) => (
+        <Furniture key={idx} item={item} roomX={room.x} roomY={room.y} />
+      ))}
+    </div>
+  );
+};
+
+// Furniture component
+const Furniture = ({ item, roomX, roomY }) => {
+  const getIcon = () => {
+    switch (item.type) {
+      case 'sofa':
+        return (
+          <div className="w-16 h-8 bg-violet-700/60 rounded-lg border border-violet-500/50 flex items-center justify-center">
+            <div className="w-12 h-4 bg-violet-600/80 rounded" />
+          </div>
+        );
+      case 'chair':
+        return (
+          <div className="w-8 h-8 bg-amber-700/60 rounded-lg border border-amber-500/50" />
+        );
+      case 'table':
+        return (
+          <div className="w-12 h-8 bg-amber-800/60 rounded border border-amber-600/50" />
+        );
+      case 'desk':
+        return (
+          <div className="w-16 h-10 bg-gray-700/60 rounded border border-gray-500/50" />
+        );
+      case 'plant':
+        return (
+          <div className="w-6 h-10 flex flex-col items-center">
+            <div className="w-6 h-6 bg-green-600/60 rounded-full" />
+            <div className="w-2 h-4 bg-amber-700/60" />
+          </div>
+        );
+      case 'lamp':
+        return (
+          <div className="w-4 h-10 flex flex-col items-center">
+            <div className="w-6 h-4 bg-yellow-400/60 rounded-t-full" />
+            <div className="w-1 h-6 bg-gray-600/60" />
+          </div>
+        );
+      case 'cafe_table':
+        return (
+          <div className="w-8 h-8 bg-amber-600/60 rounded-full border border-amber-400/50" />
+        );
+      case 'stool':
+        return (
+          <div className="w-6 h-6 bg-gray-600/60 rounded-full border border-gray-400/50" />
+        );
+      case 'counter':
+        return (
+          <div className="w-20 h-6 bg-gray-700/60 rounded border border-gray-500/50" />
+        );
+      case 'whiteboard':
+        return (
+          <div className="w-16 h-12 bg-white/80 rounded border-2 border-gray-400/50" />
+        );
+      default:
+        return <div className="w-8 h-8 bg-gray-600/40 rounded" />;
+    }
+  };
+
+  return (
+    <div
+      className="absolute furniture-hover cursor-pointer"
+      style={{
+        left: item.x - roomX,
+        top: item.y - roomY,
+        transform: `rotate(${item.rotation || 0}deg)`,
+      }}
+    >
+      {getIcon()}
+    </div>
+  );
 };
 
 const CosmosCanvas = ({ emit, socket }) => {
-  const canvasRef = useRef(null);
-  const appRef = useRef(null);
-  const playerRef = useRef(null);
-  const otherPlayersRef = useRef({});
-  const keysRef = useRef({});
-  const frameCountRef = useRef(0);
-  const furnitureRef = useRef([]);
+  const containerRef = useRef(null);
+  const [camera, setCamera] = useState({ x: 0, y: 0 });
+  const [selectedUser, setSelectedUser] = useState(null);
+  const keysPressed = useRef({});
   
-  const { user, users, rooms, sittingOn, setSittingOn } = useCosmosStore();
-  const [nearbyFurniture, setNearbyFurniture] = useState(null);
+  const { user, users, rooms, setCurrentRoom } = useCosmosStore();
 
-  // Create avatar sprite
-  const createAvatar = useCallback((userData, isPlayer = false) => {
-    const container = new PIXI.Container();
-    const { color, style } = userData.avatar || { color: '#6366f1', style: 'round' };
-    const colorNum = parseInt(color.replace('#', ''), 16);
-
-    // Shadow
-    const shadow = new PIXI.Graphics();
-    shadow.beginFill(0x000000, 0.3);
-    shadow.drawEllipse(0, 40, 20, 8);
-    shadow.endFill();
-    container.addChild(shadow);
-
-    // Body
-    const body = new PIXI.Graphics();
-    body.beginFill(colorNum);
-    body.drawEllipse(0, 30, 18, 12);
-    body.endFill();
-    container.addChild(body);
-
-    // Head container for direction
-    const headContainer = new PIXI.Container();
-    headContainer.name = 'headContainer';
-
-    const drawHead = (direction = 'down') => {
-      headContainer.removeChildren();
-      const head = new PIXI.Graphics();
-
-      switch (style) {
-        case 'cat':
-          // Cat ears
-          head.beginFill(colorNum);
-          head.moveTo(-15, 0);
-          head.lineTo(-8, -20);
-          head.lineTo(0, 0);
-          head.endFill();
-          head.moveTo(15, 0);
-          head.lineTo(8, -20);
-          head.lineTo(0, 0);
-          head.endFill();
-          // Inner ears
-          head.beginFill(0xfecaca);
-          head.moveTo(-12, -2);
-          head.lineTo(-8, -15);
-          head.lineTo(-4, -2);
-          head.endFill();
-          head.moveTo(12, -2);
-          head.lineTo(8, -15);
-          head.lineTo(4, -2);
-          head.endFill();
-          // Face
-          head.beginFill(colorNum);
-          head.drawEllipse(0, 8, 18, 16);
-          head.endFill();
-          // Eyes based on direction
-          head.beginFill(0xffffff);
-          if (direction === 'left') {
-            head.drawEllipse(-8, 5, 5, 6);
-            head.drawEllipse(3, 5, 5, 6);
-          } else if (direction === 'right') {
-            head.drawEllipse(-3, 5, 5, 6);
-            head.drawEllipse(8, 5, 5, 6);
-          } else {
-            head.drawEllipse(-6, 5, 5, 6);
-            head.drawEllipse(6, 5, 5, 6);
-          }
-          head.endFill();
-          head.beginFill(0x1e293b);
-          if (direction === 'left') {
-            head.drawCircle(-10, 6, 3);
-            head.drawCircle(1, 6, 3);
-          } else if (direction === 'right') {
-            head.drawCircle(-1, 6, 3);
-            head.drawCircle(10, 6, 3);
-          } else if (direction === 'up') {
-            // Eyes looking up
-            head.drawCircle(-6, 3, 3);
-            head.drawCircle(6, 3, 3);
-          } else {
-            head.drawCircle(-6, 7, 3);
-            head.drawCircle(6, 7, 3);
-          }
-          head.endFill();
-          // Nose
-          head.beginFill(0xfecaca);
-          head.drawEllipse(0, 12, 3, 2);
-          head.endFill();
-          break;
-
-        case 'robot':
-          // Antenna
-          head.lineStyle(2, 0x94a3b8);
-          head.moveTo(0, -20);
-          head.lineTo(0, -10);
-          head.beginFill(0xef4444);
-          head.drawCircle(0, -22, 4);
-          head.endFill();
-          // Head
-          head.lineStyle(0);
-          head.beginFill(colorNum);
-          head.drawRoundedRect(-18, -8, 36, 30, 5);
-          head.endFill();
-          // Eyes
-          head.beginFill(0x0ea5e9);
-          if (direction === 'left') {
-            head.drawRoundedRect(-16, 0, 10, 8, 2);
-            head.drawRoundedRect(-2, 0, 10, 8, 2);
-          } else if (direction === 'right') {
-            head.drawRoundedRect(-8, 0, 10, 8, 2);
-            head.drawRoundedRect(6, 0, 10, 8, 2);
-          } else {
-            head.drawRoundedRect(-14, 0, 10, 8, 2);
-            head.drawRoundedRect(4, 0, 10, 8, 2);
-          }
-          head.endFill();
-          // Mouth
-          head.beginFill(0x1e293b);
-          head.drawRoundedRect(-8, 14, 16, 4, 2);
-          head.endFill();
-          break;
-
-        case 'alien':
-          // Head
-          head.beginFill(colorNum);
-          head.drawEllipse(0, 5, 20, 22);
-          head.endFill();
-          // Big eyes
-          head.beginFill(0x1e293b);
-          const eyeOffsetX = direction === 'left' ? -5 : direction === 'right' ? 5 : 0;
-          head.drawEllipse(-8 + eyeOffsetX, 0, 8, 10);
-          head.drawEllipse(8 + eyeOffsetX, 0, 8, 10);
-          head.endFill();
-          head.beginFill(0x22c55e);
-          head.drawEllipse(-6 + eyeOffsetX, -2, 4, 5);
-          head.drawEllipse(10 + eyeOffsetX, -2, 4, 5);
-          head.endFill();
-          head.beginFill(0xffffff);
-          head.drawCircle(-8 + eyeOffsetX, -4, 2);
-          head.drawCircle(8 + eyeOffsetX, -4, 2);
-          head.endFill();
-          break;
-
-        case 'rounded-square':
-          head.beginFill(colorNum);
-          head.drawRoundedRect(-18, -5, 36, 35, 10);
-          head.endFill();
-          head.beginFill(0xffffff);
-          const sqEyeOff = direction === 'left' ? -4 : direction === 'right' ? 4 : 0;
-          head.drawEllipse(-7 + sqEyeOff, 8, 5, 6);
-          head.drawEllipse(7 + sqEyeOff, 8, 5, 6);
-          head.endFill();
-          head.beginFill(0x1e293b);
-          head.drawCircle(-7 + sqEyeOff, 10, 3);
-          head.drawCircle(7 + sqEyeOff, 10, 3);
-          head.endFill();
-          // Blush
-          head.beginFill(0xfecaca, 0.5);
-          head.drawEllipse(-14, 14, 4, 3);
-          head.drawEllipse(14, 14, 4, 3);
-          head.endFill();
-          break;
-
-        default: // round
-          head.beginFill(colorNum);
-          head.drawCircle(0, 5, 20);
-          head.endFill();
-          head.beginFill(0xffffff);
-          const eyeOff = direction === 'left' ? -4 : direction === 'right' ? 4 : 0;
-          head.drawEllipse(-7 + eyeOff, 2, 5, 6);
-          head.drawEllipse(7 + eyeOff, 2, 5, 6);
-          head.endFill();
-          head.beginFill(0x1e293b);
-          const pupilOff = direction === 'up' ? -2 : direction === 'down' ? 2 : 0;
-          head.drawCircle(-7 + eyeOff, 4 + pupilOff, 3);
-          head.drawCircle(7 + eyeOff, 4 + pupilOff, 3);
-          head.endFill();
-          // Highlight
-          head.beginFill(0xffffff);
-          head.drawCircle(-9 + eyeOff, 1 + pupilOff, 1.5);
-          head.drawCircle(5 + eyeOff, 1 + pupilOff, 1.5);
-          head.endFill();
-          // Blush
-          head.beginFill(0xfecaca, 0.4);
-          head.drawEllipse(-14, 8, 4, 3);
-          head.drawEllipse(14, 8, 4, 3);
-          head.endFill();
-          break;
-      }
-
-      headContainer.addChild(head);
-    };
-
-    drawHead('down');
-    container.addChild(headContainer);
-
-    // Name tag
-    const nameText = new PIXI.Text(userData.name, {
-      fontFamily: 'Outfit',
-      fontSize: 12,
-      fill: 0xffffff,
-      align: 'center',
-      dropShadow: true,
-      dropShadowAlpha: 0.5,
-      dropShadowBlur: 2,
-      dropShadowDistance: 1,
-    });
-    nameText.anchor.set(0.5, 0);
-    nameText.y = 48;
-    container.addChild(nameText);
-
-    // Proximity ring for player
-    if (isPlayer) {
-      const ring = new PIXI.Graphics();
-      ring.lineStyle(2, 0x8b5cf6, 0.3);
-      ring.drawCircle(0, 20, PROXIMITY_RADIUS);
-      ring.name = 'proximityRing';
-      container.addChild(ring);
-    }
-
-    container.drawHead = drawHead;
-    container.position.set(userData.position?.x || 400, userData.position?.y || 300);
-
-    return container;
-  }, []);
-
-  // Draw furniture
-  const drawFurniture = useCallback((graphics, type, x, y, rotation = 0) => {
-    const config = FURNITURE_CONFIG[type];
-    if (!config) return;
-
-    graphics.rotation = (rotation * Math.PI) / 180;
-
-    switch (type) {
-      case 'chair':
-        // Seat
-        graphics.beginFill(0x8b4513);
-        graphics.drawRoundedRect(-20, -15, 40, 30, 5);
-        graphics.endFill();
-        // Back
-        graphics.beginFill(0xa0522d);
-        graphics.drawRoundedRect(-20, -35, 40, 25, 5);
-        graphics.endFill();
-        // Legs
-        graphics.beginFill(0x654321);
-        graphics.drawRect(-18, 15, 6, 10);
-        graphics.drawRect(12, 15, 6, 10);
-        graphics.endFill();
-        break;
-
-      case 'sofa':
-        // Base
-        graphics.beginFill(0x6b21a8);
-        graphics.drawRoundedRect(-50, -10, 100, 35, 8);
-        graphics.endFill();
-        // Back
-        graphics.beginFill(0x7c3aed);
-        graphics.drawRoundedRect(-50, -30, 100, 25, 8);
-        graphics.endFill();
-        // Arms
-        graphics.beginFill(0x7c3aed);
-        graphics.drawRoundedRect(-55, -25, 12, 35, 5);
-        graphics.drawRoundedRect(43, -25, 12, 35, 5);
-        graphics.endFill();
-        // Cushions
-        graphics.beginFill(0x8b5cf6, 0.5);
-        graphics.drawEllipse(-25, 0, 20, 12);
-        graphics.drawEllipse(0, 0, 20, 12);
-        graphics.drawEllipse(25, 0, 20, 12);
-        graphics.endFill();
-        break;
-
-      case 'stool':
-        // Seat
-        graphics.beginFill(0xd97706);
-        graphics.drawCircle(0, 0, 15);
-        graphics.endFill();
-        // Legs
-        graphics.beginFill(0x78350f);
-        graphics.drawRect(-3, 15, 6, 15);
-        graphics.endFill();
-        break;
-
-      case 'table':
-        // Top
-        graphics.beginFill(0x78350f);
-        graphics.drawRoundedRect(-40, -20, 80, 40, 5);
-        graphics.endFill();
-        // Legs
-        graphics.beginFill(0x451a03);
-        graphics.drawRect(-35, 20, 8, 20);
-        graphics.drawRect(27, 20, 8, 20);
-        graphics.endFill();
-        break;
-
-      case 'desk':
-        // Top
-        graphics.beginFill(0x44403c);
-        graphics.drawRoundedRect(-60, -20, 120, 35, 3);
-        graphics.endFill();
-        // Legs
-        graphics.beginFill(0x292524);
-        graphics.drawRect(-55, 15, 8, 25);
-        graphics.drawRect(47, 15, 8, 25);
-        graphics.endFill();
-        // Drawer
-        graphics.beginFill(0x57534e);
-        graphics.drawRoundedRect(-30, -15, 60, 20, 2);
-        graphics.endFill();
-        graphics.beginFill(0x78716c);
-        graphics.drawCircle(0, -5, 3);
-        graphics.endFill();
-        break;
-
-      case 'cafe_table':
-        // Top
-        graphics.beginFill(0xfbbf24);
-        graphics.drawCircle(0, 0, 25);
-        graphics.endFill();
-        // Pole
-        graphics.beginFill(0x78350f);
-        graphics.drawRect(-4, 25, 8, 20);
-        graphics.endFill();
-        // Base
-        graphics.beginFill(0x78350f);
-        graphics.drawEllipse(0, 45, 15, 5);
-        graphics.endFill();
-        break;
-
-      case 'plant':
-        // Pot
-        graphics.beginFill(0xb45309);
-        graphics.drawRect(-12, 10, 24, 25);
-        graphics.moveTo(-15, 10);
-        graphics.lineTo(15, 10);
-        graphics.lineTo(12, 35);
-        graphics.lineTo(-12, 35);
-        graphics.closePath();
-        graphics.endFill();
-        // Leaves
-        graphics.beginFill(0x22c55e);
-        graphics.drawEllipse(-10, -5, 12, 20);
-        graphics.drawEllipse(10, -8, 12, 18);
-        graphics.drawEllipse(0, -15, 10, 22);
-        graphics.endFill();
-        graphics.beginFill(0x16a34a);
-        graphics.drawEllipse(-5, -10, 8, 15);
-        graphics.drawEllipse(8, -5, 8, 15);
-        graphics.endFill();
-        break;
-
-      case 'lamp':
-        // Base
-        graphics.beginFill(0x78716c);
-        graphics.drawEllipse(0, 30, 12, 5);
-        graphics.endFill();
-        // Pole
-        graphics.beginFill(0xa8a29e);
-        graphics.drawRect(-3, -20, 6, 50);
-        graphics.endFill();
-        // Shade
-        graphics.beginFill(0xfef3c7);
-        graphics.moveTo(-15, -25);
-        graphics.lineTo(15, -25);
-        graphics.lineTo(10, -45);
-        graphics.lineTo(-10, -45);
-        graphics.closePath();
-        graphics.endFill();
-        // Glow
-        graphics.beginFill(0xfef9c3, 0.3);
-        graphics.drawCircle(0, -15, 25);
-        graphics.endFill();
-        break;
-
-      case 'whiteboard':
-        // Frame
-        graphics.beginFill(0x78716c);
-        graphics.drawRoundedRect(-52, -40, 104, 80, 3);
-        graphics.endFill();
-        // Board
-        graphics.beginFill(0xffffff);
-        graphics.drawRect(-48, -36, 96, 72);
-        graphics.endFill();
-        // Marker tray
-        graphics.beginFill(0x525252);
-        graphics.drawRect(-40, 38, 80, 8);
-        graphics.endFill();
-        // Some writing
-        graphics.lineStyle(2, 0x3b82f6);
-        graphics.moveTo(-30, -20);
-        graphics.lineTo(30, -20);
-        graphics.moveTo(-30, -5);
-        graphics.lineTo(20, -5);
-        graphics.moveTo(-30, 10);
-        graphics.lineTo(10, 10);
-        graphics.endFill();
-        break;
-
-      case 'counter':
-        // Counter top
-        graphics.beginFill(0x451a03);
-        graphics.drawRoundedRect(-75, -15, 150, 30, 5);
-        graphics.endFill();
-        // Front
-        graphics.beginFill(0x78350f);
-        graphics.drawRoundedRect(-75, 15, 150, 20, 3);
-        graphics.endFill();
-        // Coffee machine
-        graphics.beginFill(0x1f2937);
-        graphics.drawRoundedRect(40, -35, 25, 25, 3);
-        graphics.endFill();
-        graphics.beginFill(0x374151);
-        graphics.drawRect(45, -30, 15, 10);
-        graphics.endFill();
-        break;
-    }
-  }, []);
-
-  // Initialize PIXI app
-  useEffect(() => {
-    if (!canvasRef.current || appRef.current) return;
-
-    const app = new PIXI.Application({
-      width: window.innerWidth,
-      height: window.innerHeight,
-      backgroundColor: 0x0a0a1a,
-      resolution: window.devicePixelRatio || 1,
-      autoDensity: true,
-    });
-
-    canvasRef.current.appendChild(app.view);
-    appRef.current = app;
-
-    // World container
-    const world = new PIXI.Container();
-    world.name = 'world';
-    app.stage.addChild(world);
-
-    // Draw grid floor
-    const grid = new PIXI.Graphics();
-    grid.lineStyle(1, 0x1e1e3a, 0.5);
-    for (let x = 0; x <= WORLD_WIDTH; x += 50) {
-      grid.moveTo(x, 0);
-      grid.lineTo(x, WORLD_HEIGHT);
-    }
-    for (let y = 0; y <= WORLD_HEIGHT; y += 50) {
-      grid.moveTo(0, y);
-      grid.lineTo(WORLD_WIDTH, y);
-    }
-    world.addChild(grid);
-
-    // Draw rooms
-    rooms.forEach((room) => {
-      const roomContainer = new PIXI.Container();
-      roomContainer.name = `room-${room.id}`;
-      roomContainer.x = room.x;
-      roomContainer.y = room.y;
-
-      const colors = ROOM_COLORS[room.backgroundType] || ROOM_COLORS.cosmic;
-
-      // Room floor
-      const floor = new PIXI.Graphics();
-      floor.beginFill(colors.floor);
-      floor.drawRoundedRect(0, 0, room.width, room.height, 15);
-      floor.endFill();
-      roomContainer.addChild(floor);
-
-      // Room border
-      const border = new PIXI.Graphics();
-      border.lineStyle(3, colors.accent, 0.6);
-      border.drawRoundedRect(0, 0, room.width, room.height, 15);
-      roomContainer.addChild(border);
-
-      // Room name
-      const nameText = new PIXI.Text(room.name, {
-        fontFamily: 'Outfit',
-        fontSize: 18,
-        fill: colors.accent,
-        fontWeight: 'bold',
-      });
-      nameText.x = 15;
-      nameText.y = 10;
-      roomContainer.addChild(nameText);
-
-      // Draw furniture
-      if (room.furniture) {
-        room.furniture.forEach((furn, idx) => {
-          const furnGraphics = new PIXI.Graphics();
-          furnGraphics.x = furn.x;
-          furnGraphics.y = furn.y;
-          furnGraphics.name = `furniture-${room.id}-${idx}`;
-          furnGraphics.interactive = true;
-          furnGraphics.buttonMode = true;
-          furnGraphics.furnitureData = { ...furn, roomId: room.id, index: idx };
-          
-          drawFurniture(furnGraphics, furn.type, furn.x, furn.y, furn.rotation);
-          
-          // Store reference
-          furnitureRef.current.push({
-            graphics: furnGraphics,
-            data: { ...furn, roomId: room.id, index: idx },
-            worldX: room.x + furn.x,
-            worldY: room.y + furn.y,
-          });
-
-          roomContainer.addChild(furnGraphics);
-        });
-      }
-
-      world.addChild(roomContainer);
-    });
-
-    // Cleanup
-    return () => {
-      if (appRef.current) {
-        appRef.current.destroy(true, { children: true, texture: true, baseTexture: true });
-        appRef.current = null;
-      }
-    };
-  }, [rooms, drawFurniture]);
-
-  // Create/update player sprite
-  useEffect(() => {
-    if (!appRef.current || !user) return;
-
-    const world = appRef.current.stage.getChildByName('world');
-    if (!world) return;
-
-    if (!playerRef.current) {
-      const playerSprite = createAvatar(user, true);
-      playerSprite.name = 'player';
-      world.addChild(playerSprite);
-      playerRef.current = playerSprite;
-    }
-  }, [user, createAvatar]);
-
-  // Update other players
-  useEffect(() => {
-    if (!appRef.current) return;
-
-    const world = appRef.current.stage.getChildByName('world');
-    if (!world) return;
-
-    // Add new users
-    users.forEach((userData) => {
-      if (!otherPlayersRef.current[userData.odestined]) {
-        const sprite = createAvatar(userData);
-        sprite.name = `user-${userData.odestined}`;
-        world.addChild(sprite);
-        otherPlayersRef.current[userData.odestined] = sprite;
-      }
-    });
-
-    // Remove disconnected users
-    Object.keys(otherPlayersRef.current).forEach((odestined) => {
-      if (!users.find((u) => u.odestined === odestined)) {
-        const sprite = otherPlayersRef.current[odestined];
-        world.removeChild(sprite);
-        sprite.destroy();
-        delete otherPlayersRef.current[odestined];
-      }
-    });
-
-    // Update positions
-    users.forEach((userData) => {
-      const sprite = otherPlayersRef.current[userData.odestined];
-      if (sprite && userData.position) {
-        // Smooth interpolation
-        sprite.x += (userData.position.x - sprite.x) * 0.2;
-        sprite.y += (userData.position.y - sprite.y) * 0.2;
-
-        // Update direction
-        if (sprite.drawHead && userData.direction) {
-          sprite.drawHead(userData.direction);
-        }
-
-        // Sitting animation
-        if (userData.isSitting) {
-          sprite.scale.y = 0.85;
-        } else {
-          sprite.scale.y = 1;
-        }
-      }
-    });
-  }, [users, createAvatar]);
-
-  // Keyboard controls
+  // Handle keyboard movement
   useEffect(() => {
     const handleKeyDown = (e) => {
-      keysRef.current[e.key.toLowerCase()] = true;
-      
-      // Sit/stand on E key
-      if (e.key.toLowerCase() === 'e' && nearbyFurniture) {
-        if (sittingOn) {
-          emit('user:stand');
-          setSittingOn(null);
-        } else if (nearbyFurniture.data.canSit || FURNITURE_CONFIG[nearbyFurniture.data.type]?.canSit) {
-          const config = FURNITURE_CONFIG[nearbyFurniture.data.type];
-          const seatPos = {
-            x: nearbyFurniture.worldX + (config?.seatOffset?.x || 0),
-            y: nearbyFurniture.worldY + (config?.seatOffset?.y || 0),
-          };
-          emit('user:sit', {
-            furnitureId: `${nearbyFurniture.data.roomId}-${nearbyFurniture.data.index}`,
-            position: seatPos,
-          });
-          setSittingOn(nearbyFurniture.data);
-          
-          // Move player to seat
-          if (playerRef.current) {
-            playerRef.current.x = seatPos.x;
-            playerRef.current.y = seatPos.y;
-          }
-        }
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd'].includes(e.key)) {
+        e.preventDefault();
+        keysPressed.current[e.key.toLowerCase()] = true;
       }
     };
 
     const handleKeyUp = (e) => {
-      keysRef.current[e.key.toLowerCase()] = false;
+      keysPressed.current[e.key.toLowerCase()] = false;
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -672,127 +217,258 @@ const CosmosCanvas = ({ emit, socket }) => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [emit, nearbyFurniture, sittingOn, setSittingOn]);
+  }, []);
 
-  // Game loop
+  // Movement loop
   useEffect(() => {
-    if (!appRef.current) return;
+    if (!user) return;
 
-    const gameLoop = () => {
-      if (!playerRef.current || !user || sittingOn) return;
-
-      const keys = keysRef.current;
+    const moveLoop = setInterval(() => {
+      const keys = keysPressed.current;
       let dx = 0;
       let dy = 0;
       let direction = null;
 
-      if (keys['w'] || keys['arrowup']) {
-        dy = -1;
-        direction = 'up';
-      }
-      if (keys['s'] || keys['arrowdown']) {
-        dy = 1;
-        direction = 'down';
-      }
-      if (keys['a'] || keys['arrowleft']) {
-        dx = -1;
-        direction = 'left';
-      }
-      if (keys['d'] || keys['arrowright']) {
-        dx = 1;
-        direction = 'right';
-      }
-
-      // Diagonal normalization
-      if (dx !== 0 && dy !== 0) {
-        const len = Math.sqrt(dx * dx + dy * dy);
-        dx /= len;
-        dy /= len;
-      }
+      if (keys['arrowup'] || keys['w']) { dy -= MOVE_SPEED; direction = 'up'; }
+      if (keys['arrowdown'] || keys['s']) { dy += MOVE_SPEED; direction = 'down'; }
+      if (keys['arrowleft'] || keys['a']) { dx -= MOVE_SPEED; direction = 'left'; }
+      if (keys['arrowright'] || keys['d']) { dx += MOVE_SPEED; direction = 'right'; }
 
       if (dx !== 0 || dy !== 0) {
-        const newX = Math.max(30, Math.min(WORLD_WIDTH - 30, playerRef.current.x + dx * MOVE_SPEED));
-        const newY = Math.max(30, Math.min(WORLD_HEIGHT - 30, playerRef.current.y + dy * MOVE_SPEED));
+        const newX = Math.max(50, Math.min(CANVAS_WIDTH - 50, user.position.x + dx));
+        const newY = Math.max(50, Math.min(CANVAS_HEIGHT - 50, user.position.y + dy));
 
-        playerRef.current.x = newX;
-        playerRef.current.y = newY;
-
-        // Update direction
-        if (playerRef.current.drawHead && direction) {
-          playerRef.current.drawHead(direction);
-        }
-
-        // Emit position every 2 frames
-        frameCountRef.current++;
-        if (frameCountRef.current % 2 === 0) {
-          emit('user:move', {
+        // Update local position
+        useCosmosStore.setState((state) => ({
+          user: {
+            ...state.user,
             position: { x: newX, y: newY },
-            direction,
-          });
-        }
-      }
+            direction: direction || state.user.direction,
+          },
+        }));
 
-      // Check for nearby furniture
-      let closest = null;
-      let closestDist = 60;
+        // Emit to server
+        emit('user:move', {
+          position: { x: newX, y: newY },
+          direction: direction || user.direction,
+        });
 
-      furnitureRef.current.forEach((furn) => {
-        const dist = Math.sqrt(
-          Math.pow(playerRef.current.x - furn.worldX, 2) +
-          Math.pow(playerRef.current.y - furn.worldY, 2)
+        // Check if inside a room
+        const currentRoom = rooms.find(
+          (room) =>
+            newX >= room.x &&
+            newX <= room.x + room.width &&
+            newY >= room.y &&
+            newY <= room.y + room.height
         );
-        if (dist < closestDist && (furn.data.canSit || FURNITURE_CONFIG[furn.data.type]?.canSit)) {
-          closest = furn;
-          closestDist = dist;
+
+        if (currentRoom) {
+          setCurrentRoom(currentRoom.id);
+          emit('room:enter', { roomId: currentRoom.id });
+        } else {
+          setCurrentRoom(null);
         }
-      });
-
-      setNearbyFurniture(closest);
-
-      // Camera follow
-      const world = appRef.current.stage.getChildByName('world');
-      if (world) {
-        const targetX = appRef.current.screen.width / 2 - playerRef.current.x;
-        const targetY = appRef.current.screen.height / 2 - playerRef.current.y;
-        world.x += (targetX - world.x) * 0.1;
-        world.y += (targetY - world.y) * 0.1;
       }
-    };
+    }, 1000 / 60);
 
-    appRef.current.ticker.add(gameLoop);
+    return () => clearInterval(moveLoop);
+  }, [user, emit, rooms, setCurrentRoom]);
 
-    return () => {
-      if (appRef.current) {
-        appRef.current.ticker.remove(gameLoop);
-      }
-    };
-  }, [emit, user, sittingOn]);
-
-  // Handle window resize
+  // Camera follow
   useEffect(() => {
-    const handleResize = () => {
-      if (appRef.current) {
-        appRef.current.renderer.resize(window.innerWidth, window.innerHeight);
-      }
-    };
+    if (!user || !containerRef.current) return;
 
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    const container = containerRef.current;
+    const containerWidth = container.clientWidth;
+    const containerHeight = container.clientHeight;
+
+    const targetX = user.position.x - containerWidth / 2;
+    const targetY = user.position.y - containerHeight / 2;
+
+    setCamera({
+      x: Math.max(0, Math.min(CANVAS_WIDTH - containerWidth, targetX)),
+      y: Math.max(0, Math.min(CANVAS_HEIGHT - containerHeight, targetY)),
+    });
+  }, [user?.position]);
+
+  const handleUserClick = useCallback((clickedUser) => {
+    setSelectedUser(clickedUser);
   }, []);
 
+  const handleStartCall = (type) => {
+    if (!selectedUser) return;
+    
+    useCosmosStore.setState({
+      activeCall: {
+        type,
+        targetUserId: selectedUser.odestined,
+        targetUserName: selectedUser.name,
+        isOutgoing: true,
+      },
+    });
+    
+    setSelectedUser(null);
+  };
+
+  const handleBlockUser = () => {
+    if (!selectedUser) return;
+    emit('user:block', { targetUserId: selectedUser.odestined });
+    setSelectedUser(null);
+  };
+
+  const handleVoteKick = () => {
+    if (!selectedUser) return;
+    emit('vote:kick', { targetUserId: selectedUser.odestined });
+    setSelectedUser(null);
+  };
+
+  if (!user) return null;
+
   return (
-    <div ref={canvasRef} className="absolute inset-0">
-      {/* Sit prompt */}
-      {nearbyFurniture && !sittingOn && (
-        <div className="absolute bottom-32 left-1/2 transform -translate-x-1/2 glass px-4 py-2 rounded-lg text-sm">
-          Press <span className="font-mono bg-purple-500/30 px-2 py-0.5 rounded mx-1">E</span> to sit
+    <div 
+      ref={containerRef}
+      className="w-full h-full overflow-hidden relative bg-cosmos-bg"
+    >
+      {/* Canvas world */}
+      <div
+        className="absolute transition-transform duration-100"
+        style={{
+          width: CANVAS_WIDTH,
+          height: CANVAS_HEIGHT,
+          transform: `translate(${-camera.x}px, ${-camera.y}px)`,
+        }}
+      >
+        {/* Background grid */}
+        <div
+          className="absolute inset-0 opacity-10"
+          style={{
+            backgroundImage: `
+              linear-gradient(rgba(139, 92, 246, 0.3) 1px, transparent 1px),
+              linear-gradient(90deg, rgba(139, 92, 246, 0.3) 1px, transparent 1px)
+            `,
+            backgroundSize: '50px 50px',
+          }}
+        />
+
+        {/* Stars */}
+        {[...Array(100)].map((_, i) => (
+          <div
+            key={i}
+            className="absolute w-1 h-1 bg-white rounded-full opacity-30"
+            style={{
+              left: `${(i * 37) % CANVAS_WIDTH}px`,
+              top: `${(i * 23) % CANVAS_HEIGHT}px`,
+            }}
+          />
+        ))}
+
+        {/* Rooms */}
+        {rooms.map((room) => (
+          <Room
+            key={room.id}
+            room={room}
+            isInside={user.position && 
+              user.position.x >= room.x && 
+              user.position.x <= room.x + room.width &&
+              user.position.y >= room.y && 
+              user.position.y <= room.y + room.height
+            }
+          />
+        ))}
+
+        {/* Other users */}
+        {users.map((otherUser) => (
+          <Avatar
+            key={otherUser.odestined}
+            user={otherUser}
+            isCurrentUser={false}
+            onClick={handleUserClick}
+          />
+        ))}
+
+        {/* Current user */}
+        <Avatar user={user} isCurrentUser={true} />
+      </div>
+
+      {/* User context menu */}
+      {selectedUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="glass rounded-2xl p-6 w-80">
+            <div className="flex items-center gap-4 mb-4">
+              <div
+                className="w-12 h-12 rounded-xl flex items-center justify-center"
+                style={{
+                  background: `linear-gradient(135deg, ${selectedUser.avatar?.color || '#6366f1'} 0%, ${selectedUser.avatar?.color || '#6366f1'}bb 100%)`,
+                }}
+              >
+                <div className="w-8 h-8 relative">
+                  <div className="absolute top-1.5 left-1 w-2 h-2 bg-white rounded-full" />
+                  <div className="absolute top-1.5 right-1 w-2 h-2 bg-white rounded-full" />
+                </div>
+              </div>
+              <div>
+                <h3 className="font-semibold text-white">{selectedUser.name}</h3>
+                <p className="text-sm text-gray-400">Click an action below</p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <button
+                onClick={() => handleStartCall('voice')}
+                className="w-full py-2 px-4 bg-green-600 hover:bg-green-500 rounded-lg text-white font-medium flex items-center gap-2 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                </svg>
+                Voice Call
+              </button>
+
+              <button
+                onClick={() => handleStartCall('video')}
+                className="w-full py-2 px-4 bg-blue-600 hover:bg-blue-500 rounded-lg text-white font-medium flex items-center gap-2 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                Video Call
+              </button>
+
+              <button
+                onClick={handleBlockUser}
+                className="w-full py-2 px-4 bg-red-600/20 hover:bg-red-600/40 rounded-lg text-red-400 font-medium flex items-center gap-2 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                </svg>
+                Block User
+              </button>
+
+              <button
+                onClick={handleVoteKick}
+                className="w-full py-2 px-4 bg-orange-600/20 hover:bg-orange-600/40 rounded-lg text-orange-400 font-medium flex items-center gap-2 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                Vote to Kick
+              </button>
+            </div>
+
+            <button
+              onClick={() => setSelectedUser(null)}
+              className="w-full mt-4 py-2 text-gray-400 hover:text-white transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
-      {sittingOn && (
-        <div className="absolute bottom-32 left-1/2 transform -translate-x-1/2 glass px-4 py-2 rounded-lg text-sm">
-          Press <span className="font-mono bg-purple-500/30 px-2 py-0.5 rounded mx-1">E</span> to stand
-        </div>
-      )}
+
+      {/* Controls hint */}
+      <div className="absolute bottom-4 left-4 glass px-4 py-2 rounded-lg text-sm text-gray-400">
+        Use <kbd className="px-1.5 py-0.5 bg-violet-600/30 rounded text-violet-300">Arrow Keys</kbd> or{' '}
+        <kbd className="px-1.5 py-0.5 bg-violet-600/30 rounded text-violet-300">WASD</kbd> to move
+      </div>
     </div>
   );
 };

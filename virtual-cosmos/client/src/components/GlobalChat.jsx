@@ -1,35 +1,33 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Send, X, Globe, UserX, ThumbsDown, Users } from 'lucide-react';
 import { useCosmosStore } from '../store';
 
 const GlobalChat = ({ emit }) => {
   const [message, setMessage] = useState('');
-  const [showVoteMenu, setShowVoteMenu] = useState(false);
   const messagesEndRef = useRef(null);
-  const inputRef = useRef(null);
-
-  const {
-    messages,
+  
+  const { 
+    messages, 
     user,
     users,
-    voteKicks,
-    setGlobalChatOpen,
     clearUnread,
+    setGlobalChatOpen,
   } = useCosmosStore();
 
   const chatMessages = messages['global'] || [];
 
+  // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
 
+  // Clear unread when panel is visible
   useEffect(() => {
     clearUnread('global');
     emit('chat:read', { roomId: 'global' });
   }, [clearUnread, emit]);
 
-  const handleSend = () => {
+  const handleSendMessage = (e) => {
+    e.preventDefault();
     if (!message.trim()) return;
 
     emit('chat:message', {
@@ -38,198 +36,124 @@ const GlobalChat = ({ emit }) => {
     });
 
     setMessage('');
-    inputRef.current?.focus();
-  };
-
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
   };
 
   const handleClose = () => {
     setGlobalChatOpen(false);
   };
 
-  const handleVoteKick = (targetUserId) => {
-    emit('vote:kick', { targetUserId });
-    setShowVoteMenu(false);
+  const formatTime = (timestamp) => {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  const hasVoted = (targetUserId) => {
-    const votes = voteKicks[targetUserId];
-    return votes?.voters?.includes(user?.odestined);
+  const getUserAvatar = (senderId) => {
+    const sender = users.find((u) => u.odestined === senderId);
+    return sender?.avatar?.color || '#6366f1';
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 50, scale: 0.95 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: 50, scale: 0.95 }}
-      transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-      className="fixed left-4 bottom-4 w-[420px] h-[550px] glass rounded-2xl flex flex-col overflow-hidden glow-accent"
-    >
+    <div className="absolute bottom-4 right-4 w-96 glass-chat rounded-2xl shadow-lg overflow-hidden z-30 glow-chat">
       {/* Header */}
-      <div className="bg-purple-900/40 px-4 py-3 flex items-center justify-between border-b border-purple-500/30">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-purple-500/30 rounded-lg">
-            <Globe className="w-5 h-5 text-purple-400" />
+      <div className="px-4 py-3 bg-gradient-to-r from-violet-600/20 to-purple-600/20 border-b border-violet-500/20">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <svg className="w-5 h-5 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <h3 className="font-semibold text-violet-100">Global Chat</h3>
           </div>
-          <div>
-            <h3 className="font-display font-semibold text-white">
-              Global Chat
-            </h3>
-            <p className="text-xs text-purple-300/70">
-              <Users className="w-3 h-3 inline mr-1" />
-              {users.length + 1} online
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <motion.button
-              whileHover={{ scale: 1.1 }}
-              whileTap={{ scale: 0.9 }}
-              onClick={() => setShowVoteMenu(!showVoteMenu)}
-              className="p-2 rounded-lg bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 transition-colors"
-              title="Vote to kick"
-            >
-              <UserX className="w-4 h-4" />
-            </motion.button>
-
-            {/* Vote Menu Dropdown */}
-            <AnimatePresence>
-              {showVoteMenu && (
-                <motion.div
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  className="absolute right-0 top-full mt-2 w-64 glass rounded-xl overflow-hidden z-50"
-                >
-                  <div className="p-3 border-b border-purple-500/20">
-                    <p className="text-sm font-medium text-purple-300">Vote to Remove User</p>
-                    <p className="text-xs text-gray-400 mt-1">50% votes needed to remove</p>
-                  </div>
-                  <div className="max-h-48 overflow-y-auto">
-                    {users.map((u) => {
-                      const votes = voteKicks[u.odestined];
-                      const voted = hasVoted(u.odestined);
-                      return (
-                        <button
-                          key={u.odestined}
-                          onClick={() => handleVoteKick(u.odestined)}
-                          disabled={voted}
-                          className={`w-full px-4 py-3 flex items-center justify-between hover:bg-purple-500/10 transition-colors ${
-                            voted ? 'opacity-50 cursor-not-allowed' : ''
-                          }`}
-                        >
-                          <span className="text-sm text-white">{u.name}</span>
-                          <div className="flex items-center gap-2">
-                            {votes && (
-                              <span className="text-xs text-orange-400">
-                                {votes.voteCount}/{votes.threshold}
-                              </span>
-                            )}
-                            <ThumbsDown className={`w-4 h-4 ${voted ? 'text-orange-500' : 'text-gray-400'}`} />
-                          </div>
-                        </button>
-                      );
-                    })}
-                    {users.length === 0 && (
-                      <p className="px-4 py-3 text-sm text-gray-400">No other users online</p>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-          <motion.button
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
+          <button
             onClick={handleClose}
-            className="p-2 rounded-lg bg-gray-500/20 text-gray-400 hover:bg-gray-500/30 transition-colors"
+            className="p-1 rounded-lg hover:bg-white/10 transition-colors"
           >
-            <X className="w-4 h-4" />
-          </motion.button>
+            <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
+        <p className="text-xs text-gray-400 mt-1">
+          Everyone in the cosmos can see this
+        </p>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        <AnimatePresence>
-          {chatMessages.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full text-gray-400">
-              <Globe className="w-12 h-12 mb-3 opacity-30" />
-              <p className="text-sm">No messages yet</p>
-              <p className="text-xs opacity-70">Start the conversation!</p>
-            </div>
-          )}
-          {chatMessages.map((msg, index) => {
+      <div className="h-80 overflow-y-auto p-4 space-y-3 chat-scrollbar">
+        {chatMessages.length === 0 ? (
+          <div className="text-center text-gray-400 text-sm py-8">
+            <svg className="w-8 h-8 mx-auto mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+            <p>No messages yet</p>
+            <p className="text-xs mt-1">Be the first to say hello!</p>
+          </div>
+        ) : (
+          chatMessages.map((msg) => {
             const isOwn = msg.senderId === user?.odestined;
+            
             return (
-              <motion.div
-                key={msg.id || index}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
+              <div
+                key={msg.id}
+                className={`flex gap-2 ${isOwn ? 'flex-row-reverse' : ''}`}
               >
+                {/* Avatar */}
                 <div
-                  className={`max-w-[80%] rounded-2xl px-4 py-2 ${
+                  className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-medium text-white"
+                  style={{
+                    background: `linear-gradient(135deg, ${getUserAvatar(msg.senderId)} 0%, ${getUserAvatar(msg.senderId)}bb 100%)`,
+                  }}
+                >
+                  {msg.senderName?.charAt(0).toUpperCase()}
+                </div>
+                
+                {/* Message */}
+                <div
+                  className={`max-w-[75%] rounded-2xl px-4 py-2 ${
                     isOwn
-                      ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-br-md'
-                      : 'bg-cosmos-surface/80 text-white rounded-bl-md border border-purple-500/20'
+                      ? 'bg-gradient-to-r from-violet-600 to-purple-600 text-white rounded-br-md'
+                      : 'bg-chat-surface text-chat-text rounded-bl-md'
                   }`}
                 >
                   {!isOwn && (
-                    <p className="text-xs font-medium text-purple-400 mb-1">
+                    <p className="text-xs text-violet-400 font-medium mb-1">
                       {msg.senderName}
                     </p>
                   )}
                   <p className="text-sm break-words">{msg.content}</p>
-                  <p className={`text-xs mt-1 ${isOwn ? 'text-white/60' : 'text-gray-400'}`}>
-                    {new Date(msg.timestamp).toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
+                  <p className={`text-xs mt-1 ${isOwn ? 'text-violet-200/70' : 'text-gray-400'}`}>
+                    {formatTime(msg.timestamp)}
                   </p>
                 </div>
-              </motion.div>
+              </div>
             );
-          })}
-        </AnimatePresence>
+          })
+        )}
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input */}
-      <div className="p-4 bg-purple-900/20 border-t border-purple-500/20">
+      <form onSubmit={handleSendMessage} className="p-3 border-t border-violet-500/20">
         <div className="flex gap-2">
           <input
-            ref={inputRef}
             type="text"
             value={message}
             onChange={(e) => setMessage(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="Message everyone..."
-            className="flex-1 px-4 py-3 bg-cosmos-surface/50 border border-purple-500/30 rounded-xl text-white placeholder-gray-500 focus:border-purple-500 transition-all"
+            placeholder="Send a global message..."
+            className="flex-1 px-4 py-2 bg-chat-surface border border-violet-500/30 rounded-xl text-white placeholder-gray-400 text-sm chat-input transition-colors"
+            maxLength={500}
           />
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={handleSend}
+          <button
+            type="submit"
             disabled={!message.trim()}
-            className={`px-4 py-3 rounded-xl font-medium transition-all ${
-              message.trim()
-                ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg shadow-purple-500/30'
-                : 'bg-gray-700 text-gray-500 cursor-not-allowed'
-            }`}
+            className="p-2 bg-gradient-to-r from-violet-600 to-purple-600 rounded-xl text-white disabled:opacity-50 disabled:cursor-not-allowed hover:from-violet-500 hover:to-purple-500 transition-all"
           >
-            <Send className="w-5 h-5" />
-          </motion.button>
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+            </svg>
+          </button>
         </div>
-      </div>
-    </motion.div>
+      </form>
+    </div>
   );
 };
 

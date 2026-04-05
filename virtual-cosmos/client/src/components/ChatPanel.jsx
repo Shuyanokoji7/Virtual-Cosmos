@@ -1,38 +1,33 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Send, X, Ban, Phone, Video, UserX } from 'lucide-react';
 import { useCosmosStore } from '../store';
-import { useWebRTC } from '../hooks/useWebRTC';
 
 const ChatPanel = ({ roomId, emit, socket }) => {
   const [message, setMessage] = useState('');
   const messagesEndRef = useRef(null);
-  const inputRef = useRef(null);
-
-  const {
-    messages,
-    proximityUsers,
+  
+  const { 
+    messages, 
+    proximityUsers, 
     user,
-    blockedUsers,
-    setActiveChatRoom,
     clearUnread,
+    setActiveChatRoom,
   } = useCosmosStore();
 
-  const { startCall } = useWebRTC(socket);
-
   const chatMessages = messages[roomId] || [];
-  const connectedUser = proximityUsers[0];
 
+  // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
 
+  // Clear unread when panel is visible
   useEffect(() => {
     clearUnread(roomId);
     emit('chat:read', { roomId });
   }, [roomId, clearUnread, emit]);
 
-  const handleSend = () => {
+  const handleSendMessage = (e) => {
+    e.preventDefault();
     if (!message.trim()) return;
 
     emit('chat:message', {
@@ -41,166 +36,123 @@ const ChatPanel = ({ roomId, emit, socket }) => {
     });
 
     setMessage('');
-    inputRef.current?.focus();
-  };
-
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-
-  const handleBlock = (userId) => {
-    emit('user:block', { targetUserId: userId });
   };
 
   const handleClose = () => {
     setActiveChatRoom(null);
   };
 
-  const handleVoiceCall = () => {
-    if (connectedUser) {
-      startCall(connectedUser.odestined, 'voice');
-    }
-  };
-
-  const handleVideoCall = () => {
-    if (connectedUser) {
-      startCall(connectedUser.odestined, 'video');
-    }
+  const formatTime = (timestamp) => {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, x: 50, scale: 0.95 }}
-      animate={{ opacity: 1, x: 0, scale: 1 }}
-      exit={{ opacity: 0, x: 50, scale: 0.95 }}
-      transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-      className="fixed right-4 bottom-4 w-96 h-[500px] glass-chat rounded-2xl flex flex-col overflow-hidden glow-chat"
-    >
+    <div className="absolute bottom-4 left-4 w-80 glass-chat rounded-2xl shadow-lg overflow-hidden z-30 glow-chat">
       {/* Header */}
-      <div className="bg-cosmos-chat-surface/80 px-4 py-3 flex items-center justify-between border-b border-cosmos-chat-border/30">
-        <div className="flex items-center gap-3">
-          <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse" />
-          <div>
-            <h3 className="font-display font-semibold text-cosmos-chat-text">
-              {connectedUser?.name || 'Proximity Chat'}
-            </h3>
-            <p className="text-xs text-cosmos-chat-accent/70">Connected nearby</p>
+      <div className="px-4 py-3 bg-gradient-to-r from-cyan-600/20 to-blue-600/20 border-b border-cyan-500/20">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+            <h3 className="font-semibold text-cyan-100">Proximity Chat</h3>
           </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {connectedUser && (
-            <>
-              <motion.button
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.9 }}
-                onClick={handleVoiceCall}
-                className="p-2 rounded-lg bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-colors"
-                title="Voice Call"
-              >
-                <Phone className="w-4 h-4" />
-              </motion.button>
-              <motion.button
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.9 }}
-                onClick={handleVideoCall}
-                className="p-2 rounded-lg bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition-colors"
-                title="Video Call"
-              >
-                <Video className="w-4 h-4" />
-              </motion.button>
-              <motion.button
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.9 }}
-                onClick={() => handleBlock(connectedUser.odestined)}
-                className="p-2 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
-                title="Block User"
-              >
-                <Ban className="w-4 h-4" />
-              </motion.button>
-            </>
-          )}
-          <motion.button
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
+          <button
             onClick={handleClose}
-            className="p-2 rounded-lg bg-gray-500/20 text-gray-400 hover:bg-gray-500/30 transition-colors"
+            className="p-1 rounded-lg hover:bg-white/10 transition-colors"
           >
-            <X className="w-4 h-4" />
-          </motion.button>
+            <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        
+        {/* Nearby users */}
+        <div className="flex items-center gap-1 mt-2">
+          {proximityUsers.map((nearbyUser) => (
+            <div
+              key={nearbyUser.odestined}
+              className="w-6 h-6 rounded-full flex items-center justify-center text-xs"
+              style={{
+                background: `linear-gradient(135deg, ${nearbyUser.avatar?.color || '#6366f1'} 0%, ${nearbyUser.avatar?.color || '#6366f1'}bb 100%)`,
+              }}
+              title={nearbyUser.name}
+            >
+              {nearbyUser.name?.charAt(0).toUpperCase()}
+            </div>
+          ))}
+          {proximityUsers.length > 0 && (
+            <span className="text-xs text-gray-400 ml-1">
+              {proximityUsers.length} nearby
+            </span>
+          )}
         </div>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3 chat-scrollbar">
-        <AnimatePresence>
-          {chatMessages.map((msg, index) => {
+      <div className="h-64 overflow-y-auto p-4 space-y-3 chat-scrollbar">
+        {chatMessages.length === 0 ? (
+          <div className="text-center text-gray-400 text-sm py-8">
+            <svg className="w-8 h-8 mx-auto mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+            <p>Start a conversation!</p>
+          </div>
+        ) : (
+          chatMessages.map((msg) => {
             const isOwn = msg.senderId === user?.odestined;
+            
             return (
-              <motion.div
-                key={msg.id || index}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
+              <div
+                key={msg.id}
                 className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
               >
                 <div
                   className={`max-w-[80%] rounded-2xl px-4 py-2 ${
                     isOwn
-                      ? 'bg-cosmos-chat-accent text-white rounded-br-md'
-                      : 'bg-cosmos-chat-surface text-cosmos-chat-text rounded-bl-md'
+                      ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-br-md'
+                      : 'bg-chat-surface text-chat-text rounded-bl-md'
                   }`}
                 >
                   {!isOwn && (
-                    <p className="text-xs font-medium text-cosmos-chat-accent mb-1">
+                    <p className="text-xs text-cyan-400 font-medium mb-1">
                       {msg.senderName}
                     </p>
                   )}
                   <p className="text-sm break-words">{msg.content}</p>
-                  <p className={`text-xs mt-1 ${isOwn ? 'text-white/60' : 'text-gray-400'}`}>
-                    {new Date(msg.timestamp).toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
+                  <p className={`text-xs mt-1 ${isOwn ? 'text-cyan-200/70' : 'text-gray-400'}`}>
+                    {formatTime(msg.timestamp)}
                   </p>
                 </div>
-              </motion.div>
+              </div>
             );
-          })}
-        </AnimatePresence>
+          })
+        )}
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input */}
-      <div className="p-4 bg-cosmos-chat-surface/50 border-t border-cosmos-chat-border/30">
+      <form onSubmit={handleSendMessage} className="p-3 border-t border-cyan-500/20">
         <div className="flex gap-2">
           <input
-            ref={inputRef}
             type="text"
             value={message}
             onChange={(e) => setMessage(e.target.value)}
-            onKeyPress={handleKeyPress}
             placeholder="Type a message..."
-            className="flex-1 px-4 py-3 bg-cosmos-chat-bg border border-cosmos-chat-border/50 rounded-xl text-cosmos-chat-text placeholder-gray-500 chat-input transition-all"
+            className="flex-1 px-4 py-2 bg-chat-surface border border-cyan-500/30 rounded-xl text-white placeholder-gray-400 text-sm chat-input transition-colors"
+            maxLength={500}
           />
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={handleSend}
+          <button
+            type="submit"
             disabled={!message.trim()}
-            className={`px-4 py-3 rounded-xl font-medium transition-all ${
-              message.trim()
-                ? 'bg-cosmos-chat-accent text-white shadow-lg shadow-cosmos-chat-accent/30'
-                : 'bg-gray-700 text-gray-500 cursor-not-allowed'
-            }`}
+            className="p-2 bg-gradient-to-r from-cyan-600 to-blue-600 rounded-xl text-white disabled:opacity-50 disabled:cursor-not-allowed hover:from-cyan-500 hover:to-blue-500 transition-all"
           >
-            <Send className="w-5 h-5" />
-          </motion.button>
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+            </svg>
+          </button>
         </div>
-      </div>
-    </motion.div>
+      </form>
+    </div>
   );
 };
 

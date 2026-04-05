@@ -1,182 +1,182 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Users, ChevronDown, ChevronUp, Ban, UserCheck, Phone, Video, MapPin } from 'lucide-react';
 import { useCosmosStore } from '../store';
-import { useWebRTC } from '../hooks/useWebRTC';
 
 const UserList = ({ emit, socket }) => {
   const [isExpanded, setIsExpanded] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  
   const { users, user, blockedUsers, proximityUsers } = useCosmosStore();
-  const { startCall } = useWebRTC(socket);
 
-  const handleBlock = (userId) => {
-    emit('user:block', { targetUserId: userId });
+  const filteredUsers = users.filter((u) =>
+    u.name?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const isNearby = (userId) => {
+    return proximityUsers.some((p) => p.odestined === userId);
   };
 
-  const handleUnblock = (userId) => {
-    emit('user:unblock', { targetUserId: userId });
+  const isBlocked = (userId) => {
+    return blockedUsers.has(userId);
   };
 
-  const isBlocked = (userId) => blockedUsers.has(userId);
-  const isNearby = (userId) => proximityUsers.some((p) => p.odestined === userId);
+  const handleStartCall = (targetUser, type) => {
+    useCosmosStore.setState({
+      activeCall: {
+        type,
+        targetUserId: targetUser.odestined,
+        targetUserName: targetUser.name,
+        isOutgoing: true,
+      },
+    });
+  };
 
   return (
-    <motion.div
-      initial={{ x: 100, opacity: 0 }}
-      animate={{ x: 0, opacity: 1 }}
-      transition={{ type: 'spring', damping: 20, stiffness: 100 }}
-      className="fixed right-4 top-20 w-72 glass rounded-2xl overflow-hidden z-30"
-    >
-      {/* Header */}
+    <div className={`absolute top-16 right-4 z-30 transition-all duration-300 ${isExpanded ? 'w-64' : 'w-12'}`}>
+      {/* Toggle Button */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full px-4 py-3 flex items-center justify-between bg-purple-900/30 hover:bg-purple-900/40 transition-colors"
+        className="absolute -left-10 top-2 w-8 h-8 glass rounded-lg flex items-center justify-center hover:bg-white/10 transition-colors"
       >
-        <div className="flex items-center gap-2">
-          <Users className="w-5 h-5 text-purple-400" />
-          <span className="font-display font-semibold text-white">
-            Online Users
-          </span>
-          <span className="px-2 py-0.5 bg-purple-500/30 rounded-full text-xs text-purple-300">
-            {users.length + 1}
-          </span>
-        </div>
-        {isExpanded ? (
-          <ChevronUp className="w-5 h-5 text-gray-400" />
-        ) : (
-          <ChevronDown className="w-5 h-5 text-gray-400" />
-        )}
+        <svg
+          className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+        </svg>
       </button>
 
-      {/* User List */}
-      <AnimatePresence>
-        {isExpanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="max-h-96 overflow-y-auto"
-          >
-            {/* Current User */}
-            <div className="px-4 py-3 flex items-center gap-3 border-b border-purple-500/20 bg-purple-500/10">
-              <div
-                className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold shadow-lg"
-                style={{ backgroundColor: user?.avatar?.color || '#6366f1' }}
-              >
-                {user?.name?.charAt(0).toUpperCase()}
-              </div>
-              <div className="flex-1">
-                <p className="font-medium text-white flex items-center gap-2">
-                  {user?.name}
-                  <span className="text-xs text-purple-400">(you)</span>
-                </p>
-                <p className="text-xs text-gray-400">
-                  {Math.round(user?.position?.x || 0)}, {Math.round(user?.position?.y || 0)}
-                </p>
-              </div>
+      {isExpanded && (
+        <div className="glass rounded-2xl overflow-hidden">
+          {/* Header */}
+          <div className="px-4 py-3 bg-gradient-to-r from-violet-600/20 to-purple-600/20 border-b border-violet-500/20">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-white">Online Users</h3>
+              <span className="px-2 py-0.5 bg-violet-600/30 rounded-full text-xs text-violet-300">
+                {users.length + 1}
+              </span>
             </div>
+          </div>
 
-            {/* Other Users */}
-            {users.map((u) => {
-              const blocked = isBlocked(u.odestined);
-              const nearby = isNearby(u.odestined);
+          {/* Search */}
+          <div className="p-3 border-b border-violet-500/10">
+            <div className="relative">
+              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search users..."
+                className="w-full pl-9 pr-4 py-2 bg-cosmos-surface border border-violet-500/30 rounded-lg text-white text-sm placeholder-gray-400"
+              />
+            </div>
+          </div>
 
-              return (
-                <motion.div
-                  key={u.odestined}
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  className={`px-4 py-3 flex items-center gap-3 border-b border-purple-500/10 hover:bg-purple-500/10 transition-colors ${
-                    blocked ? 'opacity-50' : ''
-                  }`}
-                >
+          {/* User List */}
+          <div className="max-h-80 overflow-y-auto">
+            {/* Current User */}
+            {user && (
+              <div className="px-4 py-3 border-b border-violet-500/10 bg-violet-600/10">
+                <div className="flex items-center gap-3">
                   <div className="relative">
                     <div
-                      className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold shadow-lg"
-                      style={{ backgroundColor: u.avatar?.color || '#6366f1' }}
+                      className="w-10 h-10 rounded-xl flex items-center justify-center"
+                      style={{
+                        background: `linear-gradient(135deg, ${user.avatar?.color || '#6366f1'} 0%, ${user.avatar?.color || '#6366f1'}bb 100%)`,
+                      }}
                     >
-                      {u.name?.charAt(0).toUpperCase()}
+                      <div className="w-6 h-6 relative">
+                        <div className="absolute top-1 left-0.5 w-1.5 h-1.5 bg-white rounded-full" />
+                        <div className="absolute top-1 right-0.5 w-1.5 h-1.5 bg-white rounded-full" />
+                      </div>
                     </div>
-                    {nearby && (
-                      <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-cosmos-surface flex items-center justify-center">
-                        <MapPin className="w-2 h-2 text-white" />
+                    <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-400 rounded-full border-2 border-cosmos-bg" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-white truncate">{user.name}</p>
+                    <p className="text-xs text-violet-300">You</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Other Users */}
+            {filteredUsers.length === 0 ? (
+              <div className="px-4 py-8 text-center text-gray-400 text-sm">
+                {searchQuery ? 'No users found' : 'No other users online'}
+              </div>
+            ) : (
+              filteredUsers.map((otherUser) => (
+                <div
+                  key={otherUser.odestined}
+                  className={`px-4 py-3 border-b border-violet-500/10 hover:bg-violet-600/10 transition-colors ${
+                    isBlocked(otherUser.odestined) ? 'opacity-50' : ''
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="relative">
+                      <div
+                        className="w-10 h-10 rounded-xl flex items-center justify-center"
+                        style={{
+                          background: `linear-gradient(135deg, ${otherUser.avatar?.color || '#6366f1'} 0%, ${otherUser.avatar?.color || '#6366f1'}bb 100%)`,
+                        }}
+                      >
+                        <div className="w-6 h-6 relative">
+                          <div className="absolute top-1 left-0.5 w-1.5 h-1.5 bg-white rounded-full" />
+                          <div className="absolute top-1 right-0.5 w-1.5 h-1.5 bg-white rounded-full" />
+                        </div>
+                      </div>
+                      <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-400 rounded-full border-2 border-cosmos-bg" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-white truncate">{otherUser.name}</p>
+                      <p className="text-xs text-gray-400">
+                        {isBlocked(otherUser.odestined) ? (
+                          <span className="text-red-400">Blocked</span>
+                        ) : isNearby(otherUser.odestined) ? (
+                          <span className="text-green-400">Nearby</span>
+                        ) : otherUser.isSitting ? (
+                          'Sitting'
+                        ) : (
+                          'Online'
+                        )}
+                      </p>
+                    </div>
+                    
+                    {/* Quick Actions */}
+                    {!isBlocked(otherUser.odestined) && (
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => handleStartCall(otherUser, 'voice')}
+                          className="p-1.5 rounded-lg bg-green-600/20 hover:bg-green-600/40 text-green-400 transition-colors"
+                          title="Voice Call"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => handleStartCall(otherUser, 'video')}
+                          className="p-1.5 rounded-lg bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 transition-colors"
+                          title="Video Call"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                        </button>
                       </div>
                     )}
                   </div>
-                  
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-white truncate flex items-center gap-2">
-                      {u.name}
-                      {nearby && (
-                        <span className="text-xs text-green-400">nearby</span>
-                      )}
-                    </p>
-                    <p className="text-xs text-gray-400">
-                      {u.isSitting ? '💺 Sitting' : `📍 ${Math.round(u.position?.x || 0)}, ${Math.round(u.position?.y || 0)}`}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    {!blocked && nearby && (
-                      <>
-                        <motion.button
-                          whileHover={{ scale: 1.1 }}
-                          whileTap={{ scale: 0.9 }}
-                          onClick={() => startCall(u.odestined, 'voice')}
-                          className="p-1.5 rounded-lg bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-colors"
-                          title="Voice Call"
-                        >
-                          <Phone className="w-3.5 h-3.5" />
-                        </motion.button>
-                        <motion.button
-                          whileHover={{ scale: 1.1 }}
-                          whileTap={{ scale: 0.9 }}
-                          onClick={() => startCall(u.odestined, 'video')}
-                          className="p-1.5 rounded-lg bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition-colors"
-                          title="Video Call"
-                        >
-                          <Video className="w-3.5 h-3.5" />
-                        </motion.button>
-                      </>
-                    )}
-                    {blocked ? (
-                      <motion.button
-                        whileHover={{ scale: 1.1 }}
-                        whileTap={{ scale: 0.9 }}
-                        onClick={() => handleUnblock(u.odestined)}
-                        className="p-1.5 rounded-lg bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-colors"
-                        title="Unblock"
-                      >
-                        <UserCheck className="w-3.5 h-3.5" />
-                      </motion.button>
-                    ) : (
-                      <motion.button
-                        whileHover={{ scale: 1.1 }}
-                        whileTap={{ scale: 0.9 }}
-                        onClick={() => handleBlock(u.odestined)}
-                        className="p-1.5 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
-                        title="Block"
-                      >
-                        <Ban className="w-3.5 h-3.5" />
-                      </motion.button>
-                    )}
-                  </div>
-                </motion.div>
-              );
-            })}
-
-            {users.length === 0 && (
-              <div className="px-4 py-8 text-center text-gray-400">
-                <Users className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">No other users online</p>
-              </div>
+                </div>
+              ))
             )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
 

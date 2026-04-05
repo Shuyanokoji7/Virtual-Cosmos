@@ -1,175 +1,162 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { X, Home, Sparkles, Briefcase, Coffee, TreePine, Zap, Palette, Clock } from 'lucide-react';
 import { useCosmosStore } from '../store';
-
-const BACKGROUND_OPTIONS = [
-  { id: 'cozy', name: 'Cozy', icon: Home, color: 'from-purple-500 to-pink-500', description: 'Warm and comfortable' },
-  { id: 'professional', name: 'Professional', icon: Briefcase, color: 'from-blue-500 to-cyan-500', description: 'Clean and modern' },
-  { id: 'warm', name: 'Warm', icon: Coffee, color: 'from-orange-500 to-red-500', description: 'Inviting atmosphere' },
-  { id: 'cosmic', name: 'Cosmic', icon: Sparkles, color: 'from-violet-500 to-purple-600', description: 'Space-themed' },
-  { id: 'nature', name: 'Nature', icon: TreePine, color: 'from-green-500 to-emerald-500', description: 'Natural and fresh' },
-  { id: 'minimal', name: 'Minimal', icon: Palette, color: 'from-gray-500 to-slate-500', description: 'Simple and clean' },
-  { id: 'retro', name: 'Retro', icon: Clock, color: 'from-amber-500 to-yellow-500', description: 'Vintage vibes' },
-  { id: 'neon', name: 'Neon', icon: Zap, color: 'from-pink-500 to-cyan-500', description: 'Vibrant and electric' },
-];
 
 const CreateRoomModal = ({ onClose, emit }) => {
   const [roomName, setRoomName] = useState('');
   const [selectedBackground, setSelectedBackground] = useState('cosmic');
   const [isCreating, setIsCreating] = useState(false);
 
-  const { user } = useCosmosStore();
+  const { backgroundTypes } = useCosmosStore();
+
+  const backgrounds = backgroundTypes.length > 0 
+    ? backgroundTypes 
+    : ['cozy', 'professional', 'warm', 'cosmic', 'nature', 'minimal', 'retro', 'neon'];
 
   const handleCreate = () => {
-    if (!roomName.trim()) return;
+    if (!roomName.trim()) {
+      alert('Please enter a room name');
+      return;
+    }
 
     setIsCreating(true);
+
     emit('room:create', {
       name: roomName.trim(),
       backgroundType: selectedBackground,
     });
 
+    // Close after a short delay (assuming success)
     setTimeout(() => {
-      setIsCreating(false);
       onClose();
     }, 500);
   };
 
+  const getBackgroundPreview = (type) => {
+    const colors = {
+      cozy: ['#2d1b4e', '#1a1a3a'],
+      professional: ['#1e3a5f', '#0f2942'],
+      warm: ['#4a2c2a', '#2d1a1a'],
+      cosmic: ['#1a0a2e', '#0a0a1a'],
+      nature: ['#1a3a2d', '#0f2a1f'],
+      minimal: ['#2a2a2a', '#1a1a1a'],
+      retro: ['#4a3a2a', '#2a2a1a'],
+      neon: ['#0a1a2e', '#1a0a3a'],
+    };
+    return colors[type] || colors.cosmic;
+  };
+
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      onClick={onClose}
-    >
-      <motion.div
-        initial={{ scale: 0.9, opacity: 0, y: 20 }}
-        animate={{ scale: 1, opacity: 1, y: 0 }}
-        exit={{ scale: 0.9, opacity: 0, y: 20 }}
-        transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-        className="glass rounded-3xl w-full max-w-lg overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="glass rounded-2xl p-6 w-96 max-w-[90vw]">
         {/* Header */}
-        <div className="bg-gradient-to-r from-purple-600/50 to-pink-600/50 px-6 py-4 flex items-center justify-between">
-          <div>
-            <h2 className="font-display text-2xl font-bold text-white">Create Your Room</h2>
-            <p className="text-purple-200 text-sm mt-1">You can create one room per account</p>
-          </div>
-          <motion.button
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-xl font-semibold text-white">Create Room</h2>
+          <button
             onClick={onClose}
-            className="p-2 rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors"
+            className="p-1 rounded-lg hover:bg-white/10 transition-colors"
           >
-            <X className="w-5 h-5" />
-          </motion.button>
+            <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
 
-        <div className="p-6 space-y-6">
-          {/* Room Name Input */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              Room Name
-            </label>
-            <input
-              type="text"
-              value={roomName}
-              onChange={(e) => setRoomName(e.target.value)}
-              placeholder={`${user?.name}'s Room`}
-              className="w-full px-4 py-3 bg-cosmos-surface/50 border border-purple-500/30 rounded-xl text-white placeholder-gray-500 focus:border-purple-500 transition-all"
-              maxLength={30}
-            />
-          </div>
+        {/* Room Name */}
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-gray-300 mb-2">
+            Room Name
+          </label>
+          <input
+            type="text"
+            value={roomName}
+            onChange={(e) => setRoomName(e.target.value)}
+            placeholder="My awesome room"
+            maxLength={30}
+            className="w-full px-4 py-3 bg-cosmos-surface border border-violet-500/30 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-violet-500 transition-colors"
+          />
+          <p className="mt-1 text-xs text-gray-500">{roomName.length}/30 characters</p>
+        </div>
 
-          {/* Background Selection */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-3">
-              Room Theme
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              {BACKGROUND_OPTIONS.map((bg) => {
-                const Icon = bg.icon;
-                const isSelected = selectedBackground === bg.id;
-                
-                return (
-                  <motion.button
-                    key={bg.id}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() => setSelectedBackground(bg.id)}
-                    className={`relative p-4 rounded-xl border-2 transition-all text-left ${
-                      isSelected
-                        ? 'border-purple-500 bg-purple-500/20'
-                        : 'border-purple-500/20 bg-cosmos-surface/30 hover:border-purple-500/50'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-lg bg-gradient-to-r ${bg.color}`}>
-                        <Icon className="w-5 h-5 text-white" />
-                      </div>
-                      <div>
-                        <p className="font-medium text-white">{bg.name}</p>
-                        <p className="text-xs text-gray-400">{bg.description}</p>
-                      </div>
-                    </div>
-                    {isSelected && (
-                      <motion.div
-                        layoutId="selected-bg"
-                        className="absolute top-2 right-2 w-5 h-5 bg-purple-500 rounded-full flex items-center justify-center"
-                      >
-                        <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                        </svg>
-                      </motion.div>
-                    )}
-                  </motion.button>
-                );
-              })}
-            </div>
+        {/* Background Selection */}
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-gray-300 mb-3">
+            Background Theme
+          </label>
+          <div className="grid grid-cols-4 gap-2">
+            {backgrounds.map((type) => {
+              const [color1, color2] = getBackgroundPreview(type);
+              return (
+                <button
+                  key={type}
+                  onClick={() => setSelectedBackground(type)}
+                  className={`aspect-square rounded-xl transition-all ${
+                    selectedBackground === type 
+                      ? 'ring-2 ring-violet-400 ring-offset-2 ring-offset-cosmos-bg scale-105' 
+                      : 'hover:scale-105'
+                  }`}
+                  style={{
+                    background: `linear-gradient(135deg, ${color1} 0%, ${color2} 100%)`,
+                  }}
+                  title={type.charAt(0).toUpperCase() + type.slice(1)}
+                />
+              );
+            })}
           </div>
+          <p className="mt-2 text-sm text-gray-400 text-center capitalize">
+            {selectedBackground}
+          </p>
+        </div>
 
-          {/* Preview */}
-          <div className={`h-24 rounded-xl room-bg-${selectedBackground} flex items-center justify-center border border-purple-500/30`}>
-            <div className="text-center">
-              <p className="text-white font-medium">{roomName || `${user?.name}'s Room`}</p>
-              <p className="text-xs text-gray-300 mt-1">Preview</p>
-            </div>
+        {/* Preview */}
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-gray-300 mb-2">
+            Preview
+          </label>
+          <div
+            className="w-full h-24 rounded-xl border border-violet-500/30 flex items-center justify-center"
+            style={{
+              background: `linear-gradient(135deg, ${getBackgroundPreview(selectedBackground)[0]} 0%, ${getBackgroundPreview(selectedBackground)[1]} 100%)`,
+            }}
+          >
+            <span className="text-white font-medium px-3 py-1 bg-black/30 rounded-lg">
+              {roomName || 'Room Name'}
+            </span>
           </div>
+        </div>
 
-          {/* Create Button */}
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
+        {/* Actions */}
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-3 bg-gray-700 hover:bg-gray-600 rounded-xl font-medium text-white transition-colors"
+          >
+            Cancel
+          </button>
+          <button
             onClick={handleCreate}
-            disabled={!roomName.trim() || isCreating}
-            className={`w-full py-4 rounded-xl font-display font-semibold text-lg transition-all flex items-center justify-center gap-2 ${
-              roomName.trim() && !isCreating
-                ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50'
-                : 'bg-gray-700 text-gray-500 cursor-not-allowed'
-            }`}
+            disabled={isCreating || !roomName.trim()}
+            className="flex-1 py-3 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 rounded-xl font-medium text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isCreating ? (
-              <>
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-                  className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full"
-                />
+              <span className="flex items-center justify-center gap-2">
+                <svg className="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
                 Creating...
-              </>
+              </span>
             ) : (
-              <>
-                <Sparkles className="w-5 h-5" />
-                Create Room
-              </>
+              'Create Room'
             )}
-          </motion.button>
+          </button>
         </div>
-      </motion.div>
-    </motion.div>
+
+        {/* Info */}
+        <p className="mt-4 text-xs text-gray-500 text-center">
+          You can only create one room. Rooms include random furniture.
+        </p>
+      </div>
+    </div>
   );
 };
 
