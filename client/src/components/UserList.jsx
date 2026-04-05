@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useCosmosStore } from '../store';
+import { AvatarPreview3D } from './Avatar3D';
 
 const UserList = ({ emit, socket }) => {
   const [isExpanded, setIsExpanded] = useState(true);
@@ -83,15 +84,17 @@ const UserList = ({ emit, socket }) => {
                 <div className="flex items-center gap-3">
                   <div className="relative">
                     <div
-                      className="w-10 h-10 rounded-xl flex items-center justify-center"
+                      className="w-10 h-10 rounded-xl overflow-hidden"
                       style={{
-                        background: `linear-gradient(135deg, ${user.avatar?.color || '#6366f1'} 0%, ${user.avatar?.color || '#6366f1'}bb 100%)`,
+                        boxShadow: `0 0 10px ${user.avatar?.color || '#6366f1'}50`,
                       }}
                     >
-                      <div className="w-6 h-6 relative">
-                        <div className="absolute top-1 left-0.5 w-1.5 h-1.5 bg-white rounded-full" />
-                        <div className="absolute top-1 right-0.5 w-1.5 h-1.5 bg-white rounded-full" />
-                      </div>
+                      <AvatarPreview3D 
+                        characterId={user.avatar?.characterId || 'male-a'}
+                        color={user.avatar?.color || '#6366f1'}
+                        size={40}
+                        autoRotate={false}
+                      />
                     </div>
                     <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-400 rounded-full border-2 border-cosmos-bg" />
                   </div>
@@ -119,15 +122,17 @@ const UserList = ({ emit, socket }) => {
                   <div className="flex items-center gap-3">
                     <div className="relative">
                       <div
-                        className="w-10 h-10 rounded-xl flex items-center justify-center"
+                        className="w-10 h-10 rounded-xl overflow-hidden"
                         style={{
-                          background: `linear-gradient(135deg, ${otherUser.avatar?.color || '#6366f1'} 0%, ${otherUser.avatar?.color || '#6366f1'}bb 100%)`,
+                          boxShadow: `0 0 8px ${otherUser.avatar?.color || '#6366f1'}40`,
                         }}
                       >
-                        <div className="w-6 h-6 relative">
-                          <div className="absolute top-1 left-0.5 w-1.5 h-1.5 bg-white rounded-full" />
-                          <div className="absolute top-1 right-0.5 w-1.5 h-1.5 bg-white rounded-full" />
-                        </div>
+                        <AvatarPreview3D 
+                          characterId={otherUser.avatar?.characterId || 'male-a'}
+                          color={otherUser.avatar?.color || '#6366f1'}
+                          size={40}
+                          autoRotate={false}
+                        />
                       </div>
                       <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-400 rounded-full border-2 border-cosmos-bg" />
                     </div>
