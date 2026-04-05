@@ -2,14 +2,10 @@ import { useEffect, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import { useCosmosStore } from '../store';
 
-const SOCKET_URL = import.meta.env.VITE_API_URL || null;
-if (!SOCKET_URL) {
-  console.warn("No backend URL set");
-  return;
-}
-
 export const useSocket = () => {
+  const SOCKET_URL = import.meta.env.VITE_API_URL;
   const socketRef = useRef(null);
+
   const {
     setUser,
     setUsers,
@@ -32,6 +28,11 @@ export const useSocket = () => {
   } = useCosmosStore();
 
   useEffect(() => {
+    if (!SOCKET_URL) {
+      console.warn("No backend URL set");
+      return;
+    }
+
     if (!socketRef.current) {
       socketRef.current = io(SOCKET_URL, {
         autoConnect: true,
@@ -42,7 +43,6 @@ export const useSocket = () => {
 
       const socket = socketRef.current;
 
-      // Connection events
       socket.on('connect', () => {
         console.log('🔌 Connected to server');
       });
@@ -51,7 +51,6 @@ export const useSocket = () => {
         console.log('🔌 Disconnected from server');
       });
 
-      // User events
       socket.on('user:joined', (data) => {
         setUser({
           odestined: data.odestined,
@@ -64,20 +63,17 @@ export const useSocket = () => {
         setBackgroundTypes(data.backgroundTypes || []);
       });
 
-      socket.on('users:existing', (users) => {
-        setUsers(users);
-      });
-
-      socket.on('user:new', (user) => {
-        addUser(user);
-      });
-
-      socket.on('user:left', (data) => {
-        removeUser(data.odestined);
-      });
+      socket.on('users:existing', setUsers);
+      socket.on('user:new', addUser);
+      socket.on('user:left', (data) => removeUser(data.odestined));
 
       socket.on('user:moved', (data) => {
-        updateUserPosition(data.odestined, data.position, data.direction, data.isSitting);
+        updateUserPosition(
+          data.odestined,
+          data.position,
+          data.direction,
+          data.isSitting
+        );
       });
 
       socket.on('user:sat', (data) => {
@@ -93,26 +89,23 @@ export const useSocket = () => {
         window.location.reload();
       });
 
-      // Room events
-      socket.on('room:created', (room) => {
-        addRoom(room);
-      });
+      socket.on('room:created', addRoom);
 
       socket.on('room:error', (data) => {
         alert(data.message);
       });
 
-      // Proximity events
       socket.on('proximity:connect', (data) => {
-        const { userId, userName, chatRoomId } = data;
-        addProximityUser({ odestined: userId, name: userName }, chatRoomId);
+        addProximityUser(
+          { odestined: data.userId, name: data.userName },
+          data.chatRoomId
+        );
       });
 
       socket.on('proximity:disconnect', (data) => {
         removeProximityUser(data.userId);
       });
 
-      // Chat events
       socket.on('chat:message', (message) => {
         addMessage(message.roomId, message);
       });
@@ -125,21 +118,18 @@ export const useSocket = () => {
         setUnreadCount(data.roomId, data.count);
       });
 
-      // Block events
-      socket.on('user:blocked', (data) => {
-        blockUser(data.userId);
-      });
+      socket.on('user:blocked', (data) => blockUser(data.userId));
+      socket.on('user:unblocked', (data) => unblockUser(data.userId));
 
-      socket.on('user:unblocked', (data) => {
-        unblockUser(data.userId);
-      });
-
-      // Vote kick events
       socket.on('vote:update', (data) => {
-        updateVoteKick(data.targetUserId, data.voteCount, data.threshold, data.voters);
+        updateVoteKick(
+          data.targetUserId,
+          data.voteCount,
+          data.threshold,
+          data.voters
+        );
       });
 
-      // WebRTC events
       socket.on('webrtc:offer', (data) => {
         setActiveCall({
           type: data.type,
@@ -151,7 +141,6 @@ export const useSocket = () => {
       });
 
       socket.on('webrtc:answer', (data) => {
-        // Handle in VideoCallOverlay component
         window.dispatchEvent(new CustomEvent('webrtc:answer', { detail: data }));
       });
 
@@ -159,9 +148,7 @@ export const useSocket = () => {
         window.dispatchEvent(new CustomEvent('webrtc:ice-candidate', { detail: data }));
       });
 
-      socket.on('webrtc:end', () => {
-        clearCall();
-      });
+      socket.on('webrtc:end', clearCall);
     }
 
     return () => {
@@ -170,24 +157,18 @@ export const useSocket = () => {
         socketRef.current = null;
       }
     };
-  }, []);
+  }, [SOCKET_URL]);
 
   const emit = useCallback((event, data) => {
-    if (socketRef.current) {
-      socketRef.current.emit(event, data);
-    }
+    socketRef.current?.emit(event, data);
   }, []);
 
   const on = useCallback((event, handler) => {
-    if (socketRef.current) {
-      socketRef.current.on(event, handler);
-    }
+    socketRef.current?.on(event, handler);
   }, []);
 
   const off = useCallback((event, handler) => {
-    if (socketRef.current) {
-      socketRef.current.off(event, handler);
-    }
+    socketRef.current?.off(event, handler);
   }, []);
 
   return {
