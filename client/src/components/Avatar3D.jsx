@@ -1,6 +1,6 @@
-import React, { useRef, useMemo, Suspense } from 'react';
+import React, { useRef, useMemo, Suspense, useEffect } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { useGLTF, OrbitControls } from '@react-three/drei';
+import { useGLTF, OrbitControls, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
 
 // Available character models - each has unique outfit/hairstyle
@@ -24,6 +24,9 @@ CHARACTER_MODELS.forEach(char => {
   useGLTF.preload(char.file);
 });
 
+// Preload colormap texture
+useTexture.preload('/models/colormap.png');
+
 // Direction to rotation mapping
 const DIRECTION_ROTATIONS = {
   up: Math.PI,
@@ -35,24 +38,34 @@ const DIRECTION_ROTATIONS = {
 // Single character model with smooth rotation
 function CharacterModel({ modelFile, scale = 1, targetRotation = 0, bobbing = false }) {
   const { scene } = useGLTF(modelFile);
+  const colormap = useTexture('/models/colormap.png');
   const groupRef = useRef();
   const currentRotation = useRef(0);
   
-  // Clone the scene - preserve original materials and colors
+  // Configure the colormap texture
+  useEffect(() => {
+    colormap.flipY = false;
+    colormap.colorSpace = THREE.SRGBColorSpace;
+    colormap.needsUpdate = true;
+  }, [colormap]);
+  
+  // Clone the scene and apply colormap texture
   const clonedScene = useMemo(() => {
     const clone = scene.clone(true);
     
     clone.traverse((child) => {
       if (child.isMesh && child.material) {
         // Clone material to avoid shared state
-        child.material = child.material.clone();
-        // Ensure proper rendering
-        child.material.needsUpdate = true;
+        const newMaterial = child.material.clone();
+        // Apply the colormap texture
+        newMaterial.map = colormap;
+        newMaterial.needsUpdate = true;
+        child.material = newMaterial;
       }
     });
     
     return clone;
-  }, [scene]);
+  }, [scene, colormap]);
   
   // Smooth rotation and bobbing animation
   useFrame((state, delta) => {
@@ -151,7 +164,7 @@ export function AvatarPreview3D({
       <Canvas
         camera={{ position: [0, 1, 2.2], fov: 40 }}
         style={{ background: 'transparent' }}
-        gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
+        gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true, outputColorSpace: THREE.SRGBColorSpace }}
       >
         {/* Stronger lighting for proper color visibility */}
         <ambientLight intensity={1.5} />
@@ -201,7 +214,7 @@ export function InlineAvatar3D({
       <Canvas
         camera={{ position: [0, 1.3, 2.8], fov: 32 }}
         style={{ background: 'transparent' }}
-        gl={{ antialias: true, alpha: true }}
+        gl={{ antialias: true, alpha: true, outputColorSpace: THREE.SRGBColorSpace }}
         dpr={[1, 2]}
       >
         {/* Strong lighting */}

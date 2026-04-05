@@ -3,7 +3,11 @@ import { useCosmosStore } from '../store';
 
 const ChatPanel = ({ roomId, emit, socket }) => {
   const [message, setMessage] = useState('');
+  const [position, setPosition] = useState({ x: 16, y: window.innerHeight - 400 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const messagesEndRef = useRef(null);
+  const panelRef = useRef(null);
   
   const { 
     messages, 
@@ -25,6 +29,45 @@ const ChatPanel = ({ roomId, emit, socket }) => {
     clearUnread(roomId);
     emit('chat:read', { roomId });
   }, [roomId, clearUnread, emit]);
+
+  // Handle drag
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isDragging) return;
+      const newX = e.clientX - dragOffset.x;
+      const newY = e.clientY - dragOffset.y;
+      const panelWidth = 320;
+      const panelHeight = 400;
+      setPosition({
+        x: Math.max(0, Math.min(window.innerWidth - panelWidth, newX)),
+        y: Math.max(0, Math.min(window.innerHeight - panelHeight, newY)),
+      });
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging, dragOffset]);
+
+  const handleMouseDown = (e) => {
+    if (e.target.closest('input') || e.target.closest('button') || e.target.closest('.chat-messages')) return;
+    setIsDragging(true);
+    const rect = panelRef.current.getBoundingClientRect();
+    setDragOffset({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    });
+  };
 
   const handleSendMessage = (e) => {
     e.preventDefault();
@@ -48,11 +91,21 @@ const ChatPanel = ({ roomId, emit, socket }) => {
   };
 
   return (
-    <div className="absolute bottom-4 left-4 w-80 glass-chat rounded-2xl shadow-lg overflow-hidden z-30 glow-chat">
-      {/* Header */}
-      <div className="px-4 py-3 bg-gradient-to-r from-cyan-600/20 to-blue-600/20 border-b border-cyan-500/20">
+    <div 
+      ref={panelRef}
+      className="fixed w-80 glass-chat rounded-2xl shadow-lg overflow-hidden z-30 glow-chat"
+      style={{ left: position.x, top: position.y }}
+    >
+      {/* Header - Draggable */}
+      <div 
+        className="px-4 py-3 bg-gradient-to-r from-cyan-600/20 to-blue-600/20 border-b border-cyan-500/20 cursor-grab active:cursor-grabbing select-none"
+        onMouseDown={handleMouseDown}
+      >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
+            <svg className="w-4 h-4 text-gray-400" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
             <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
             <h3 className="font-semibold text-cyan-100">Proximity Chat</h3>
           </div>
@@ -89,7 +142,7 @@ const ChatPanel = ({ roomId, emit, socket }) => {
       </div>
 
       {/* Messages */}
-      <div className="h-64 overflow-y-auto p-4 space-y-3 chat-scrollbar">
+      <div className="h-64 overflow-y-auto p-4 space-y-3 chat-scrollbar chat-messages">
         {chatMessages.length === 0 ? (
           <div className="text-center text-gray-400 text-sm py-8">
             <svg className="w-8 h-8 mx-auto mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -138,7 +191,8 @@ const ChatPanel = ({ roomId, emit, socket }) => {
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             placeholder="Type a message..."
-            className="flex-1 px-4 py-2 bg-chat-surface border border-cyan-500/30 rounded-xl text-white placeholder-gray-400 text-sm chat-input transition-colors"
+            className="flex-1 px-4 py-2 bg-[#1e3a5f] border border-cyan-500/30 rounded-xl text-sm chat-input transition-colors focus:outline-none focus:border-cyan-400"
+            style={{ color: '#ffffff', caretColor: '#ffffff', WebkitTextFillColor: '#ffffff' }}
             maxLength={500}
           />
           <button

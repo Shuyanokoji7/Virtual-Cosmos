@@ -3,7 +3,11 @@ import { useCosmosStore } from '../store';
 
 const GlobalChat = ({ emit }) => {
   const [message, setMessage] = useState('');
+  const [position, setPosition] = useState({ x: window.innerWidth - 400, y: window.innerHeight - 480 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const messagesEndRef = useRef(null);
+  const panelRef = useRef(null);
   
   const { 
     messages, 
@@ -25,6 +29,45 @@ const GlobalChat = ({ emit }) => {
     clearUnread('global');
     emit('chat:read', { roomId: 'global' });
   }, [clearUnread, emit]);
+
+  // Handle drag
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isDragging) return;
+      const newX = e.clientX - dragOffset.x;
+      const newY = e.clientY - dragOffset.y;
+      const panelWidth = 384;
+      const panelHeight = 480;
+      setPosition({
+        x: Math.max(0, Math.min(window.innerWidth - panelWidth, newX)),
+        y: Math.max(0, Math.min(window.innerHeight - panelHeight, newY)),
+      });
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging, dragOffset]);
+
+  const handleMouseDown = (e) => {
+    if (e.target.closest('input') || e.target.closest('button') || e.target.closest('.chat-messages')) return;
+    setIsDragging(true);
+    const rect = panelRef.current.getBoundingClientRect();
+    setDragOffset({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    });
+  };
 
   const handleSendMessage = (e) => {
     e.preventDefault();
@@ -53,11 +96,21 @@ const GlobalChat = ({ emit }) => {
   };
 
   return (
-    <div className="absolute bottom-4 right-4 w-96 glass-chat rounded-2xl shadow-lg overflow-hidden z-30 glow-chat">
-      {/* Header */}
-      <div className="px-4 py-3 bg-gradient-to-r from-violet-600/20 to-purple-600/20 border-b border-violet-500/20">
+    <div 
+      ref={panelRef}
+      className="fixed w-96 glass-chat rounded-2xl shadow-lg overflow-hidden z-30 glow-chat"
+      style={{ left: position.x, top: position.y }}
+    >
+      {/* Header - Draggable */}
+      <div 
+        className="px-4 py-3 bg-gradient-to-r from-violet-600/20 to-purple-600/20 border-b border-violet-500/20 cursor-grab active:cursor-grabbing select-none"
+        onMouseDown={handleMouseDown}
+      >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
+            <svg className="w-4 h-4 text-gray-400" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
             <svg className="w-5 h-5 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
@@ -78,7 +131,7 @@ const GlobalChat = ({ emit }) => {
       </div>
 
       {/* Messages */}
-      <div className="h-80 overflow-y-auto p-4 space-y-3 chat-scrollbar">
+      <div className="h-80 overflow-y-auto p-4 space-y-3 chat-scrollbar chat-messages">
         {chatMessages.length === 0 ? (
           <div className="text-center text-gray-400 text-sm py-8">
             <svg className="w-8 h-8 mx-auto mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -139,7 +192,8 @@ const GlobalChat = ({ emit }) => {
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             placeholder="Send a global message..."
-            className="flex-1 px-4 py-2 bg-chat-surface border border-violet-500/30 rounded-xl text-white placeholder-gray-400 text-sm chat-input transition-colors"
+            className="flex-1 px-4 py-2 bg-[#1e3a5f] border border-violet-500/30 rounded-xl text-sm chat-input transition-colors focus:outline-none focus:border-violet-400"
+            style={{ color: '#ffffff', caretColor: '#ffffff', WebkitTextFillColor: '#ffffff' }}
             maxLength={500}
           />
           <button
