@@ -2,11 +2,14 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useCosmosStore } from '../store';
 
 const MOVE_SPEED = 5;
+const CLICK_MOVE_SPEED = 8;
 const CANVAS_WIDTH = 2000;
 const CANVAS_HEIGHT = 1500;
+const LERP_FACTOR = 0.15; // Interpolation smoothness for other users
+const CAMERA_LERP = 0.1; // Camera smoothing
 
 // Avatar component rendered on canvas
-const Avatar = ({ user, isCurrentUser, onClick }) => {
+const Avatar = ({ user, isCurrentUser, onClick, interpolatedPosition }) => {
   const getShapeStyle = () => {
     const style = user.avatar?.style || 'default';
     switch (style) {
@@ -18,14 +21,18 @@ const Avatar = ({ user, isCurrentUser, onClick }) => {
   };
 
   const color = user.avatar?.color || '#6366f1';
+  
+  // Use interpolated position for other users, direct position for current user
+  const displayPos = isCurrentUser ? user.position : (interpolatedPosition || user.position);
 
   return (
     <div
-      className={`absolute transition-all duration-100 cursor-pointer ${isCurrentUser ? 'z-20' : 'z-10'}`}
+      className={`absolute cursor-pointer ${isCurrentUser ? 'z-20' : 'z-10'}`}
       style={{
-        left: user.position?.x - 24,
-        top: user.position?.y - 24,
+        left: displayPos?.x - 24,
+        top: displayPos?.y - 24,
         transform: user.isSitting ? 'scale(0.9)' : 'scale(1)',
+        // No CSS transitions - positions are updated directly
       }}
       onClick={() => !isCurrentUser && onClick?.(user)}
     >
@@ -39,7 +46,7 @@ const Avatar = ({ user, isCurrentUser, onClick }) => {
       
       {/* Avatar body */}
       <div
-        className={`w-12 h-12 ${getShapeStyle()} flex items-center justify-center shadow-lg transition-all duration-200 ${
+        className={`w-12 h-12 ${getShapeStyle()} flex items-center justify-center shadow-lg ${
           isCurrentUser ? 'ring-2 ring-white' : ''
         }`}
         style={{
@@ -189,11 +196,37 @@ const Furniture = ({ item, roomX, roomY }) => {
   );
 };
 
+// Click indicator component
+const ClickIndicator = ({ position }) => {
+  if (!position) return null;
+  
+  return (
+    <div
+      className="absolute pointer-events-none z-30"
+      style={{
+        left: position.x,
+        top: position.y,
+        transform: 'translate(-50%, -50%)',
+      }}
+    >
+      <div className="w-6 h-6 rounded-full border-2 border-violet-400 animate-ping opacity-75" />
+      <div className="absolute inset-0 w-6 h-6 rounded-full border-2 border-violet-400" />
+    </div>
+  );
+};
+
 const CosmosCanvas = ({ emit, socket }) => {
   const containerRef = useRef(null);
   const [camera, setCamera] = useState({ x: 0, y: 0 });
   const [selectedUser, setSelectedUser] = useState(null);
+  const [clickTarget, setClickTarget] = useState(null);
+  const [clickIndicator, setClickIndicator] = useState(null);
+  
   const keysPressed = useRef({});
+  const cameraRef = useRef({ x: 0, y: 0 });
+  const interpolatedPositions = useRef({});
+  const animationFrameRef = useRef(null);
+  const lastEmitTime = useRef(0);
   
   const { user, users, rooms, setCurrentRoom } = useCosmosStore();
 
@@ -203,6 +236,9 @@ const CosmosCanvas = ({ emit, socket }) => {
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd'].includes(e.key)) {
         e.preventDefault();
         keysPressed.current[e.key.toLowerCase()] = true;
+        // Cancel click-to-move when using keyboard
+        setClickTarget(null);
+        setClickIndicator(null);
       }
     };
 
@@ -219,26 +255,77 @@ const CosmosCanvas = ({ emit, socket }) => {
     };
   }, []);
 
-  // Movement loop
+  // Handle canvas click for click-to-move
+  const handleCanvasClick = useCallback((e) => {
+    if (!user || !containerRef.current) return;
+    
+    // Ignore clicks on avatars or UI elements
+    if (e.target.closest('.cursor-pointer') && !e.target.closest('.canvas-clickable')) {
+      return;
+    }
+
+    const rect = containerRef.current.getBoundingClientRect();
+    const clickX = e.clientX - rect.left + camera.x;
+    const clickY = e.clientY - rect.top + camera.y;
+    
+    // Clamp to canvas bounds
+    const targetX = Math.max(50, Math.min(CANVAS_WIDTH - 50, clickX));
+    const targetY = Math.max(50, Math.min(CANVAS_HEIGHT - 50, clickY));
+    
+    setClickTarget({ x: targetX, y: targetY });
+    setClickIndicator({ x: targetX, y: targetY });
+    
+    // Hide indicator after animation
+    setTimeout(() => setClickIndicator(null), 600);
+  }, [user, camera]);
+
+  // Main game loop using requestAnimationFrame for smooth updates
   useEffect(() => {
     if (!user) return;
 
-    const moveLoop = setInterval(() => {
+    const gameLoop = () => {
       const keys = keysPressed.current;
       let dx = 0;
       let dy = 0;
       let direction = null;
+      let moved = false;
 
+      // Keyboard movement
       if (keys['arrowup'] || keys['w']) { dy -= MOVE_SPEED; direction = 'up'; }
       if (keys['arrowdown'] || keys['s']) { dy += MOVE_SPEED; direction = 'down'; }
       if (keys['arrowleft'] || keys['a']) { dx -= MOVE_SPEED; direction = 'left'; }
       if (keys['arrowright'] || keys['d']) { dx += MOVE_SPEED; direction = 'right'; }
 
+      // Click-to-move
+      if (clickTarget && dx === 0 && dy === 0) {
+        const currentX = user.position.x;
+        const currentY = user.position.y;
+        const distX = clickTarget.x - currentX;
+        const distY = clickTarget.y - currentY;
+        const distance = Math.sqrt(distX * distX + distY * distY);
+        
+        if (distance > CLICK_MOVE_SPEED) {
+          // Normalize and apply speed
+          dx = (distX / distance) * CLICK_MOVE_SPEED;
+          dy = (distY / distance) * CLICK_MOVE_SPEED;
+          
+          // Determine direction based on dominant axis
+          if (Math.abs(distX) > Math.abs(distY)) {
+            direction = distX > 0 ? 'right' : 'left';
+          } else {
+            direction = distY > 0 ? 'down' : 'up';
+          }
+        } else {
+          // Close enough, stop moving
+          setClickTarget(null);
+        }
+      }
+
       if (dx !== 0 || dy !== 0) {
         const newX = Math.max(50, Math.min(CANVAS_WIDTH - 50, user.position.x + dx));
         const newY = Math.max(50, Math.min(CANVAS_HEIGHT - 50, user.position.y + dy));
 
-        // Update local position
+        // Update local position immediately
         useCosmosStore.setState((state) => ({
           user: {
             ...state.user,
@@ -247,11 +334,17 @@ const CosmosCanvas = ({ emit, socket }) => {
           },
         }));
 
-        // Emit to server
-        emit('user:move', {
-          position: { x: newX, y: newY },
-          direction: direction || user.direction,
-        });
+        moved = true;
+
+        // Throttle network updates to ~30fps to reduce bandwidth while keeping local movement smooth
+        const now = Date.now();
+        if (now - lastEmitTime.current > 33) {
+          emit('user:move', {
+            position: { x: newX, y: newY },
+            direction: direction || user.direction,
+          });
+          lastEmitTime.current = now;
+        }
 
         // Check if inside a room
         const currentRoom = rooms.find(
@@ -269,27 +362,54 @@ const CosmosCanvas = ({ emit, socket }) => {
           setCurrentRoom(null);
         }
       }
-    }, 1000 / 60);
 
-    return () => clearInterval(moveLoop);
-  }, [user, emit, rooms, setCurrentRoom]);
+      // Interpolate other users' positions for smooth movement
+      users.forEach((otherUser) => {
+        const id = otherUser.odestined;
+        const targetPos = otherUser.position;
+        
+        if (!interpolatedPositions.current[id]) {
+          interpolatedPositions.current[id] = { ...targetPos };
+        } else {
+          const current = interpolatedPositions.current[id];
+          current.x += (targetPos.x - current.x) * LERP_FACTOR;
+          current.y += (targetPos.y - current.y) * LERP_FACTOR;
+        }
+      });
 
-  // Camera follow
-  useEffect(() => {
-    if (!user || !containerRef.current) return;
+      // Smooth camera follow
+      if (containerRef.current) {
+        const container = containerRef.current;
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
 
-    const container = containerRef.current;
-    const containerWidth = container.clientWidth;
-    const containerHeight = container.clientHeight;
+        const targetCamX = user.position.x - containerWidth / 2;
+        const targetCamY = user.position.y - containerHeight / 2;
 
-    const targetX = user.position.x - containerWidth / 2;
-    const targetY = user.position.y - containerHeight / 2;
+        const clampedTargetX = Math.max(0, Math.min(CANVAS_WIDTH - containerWidth, targetCamX));
+        const clampedTargetY = Math.max(0, Math.min(CANVAS_HEIGHT - containerHeight, targetCamY));
 
-    setCamera({
-      x: Math.max(0, Math.min(CANVAS_WIDTH - containerWidth, targetX)),
-      y: Math.max(0, Math.min(CANVAS_HEIGHT - containerHeight, targetY)),
-    });
-  }, [user?.position]);
+        // Smooth camera interpolation
+        cameraRef.current.x += (clampedTargetX - cameraRef.current.x) * CAMERA_LERP;
+        cameraRef.current.y += (clampedTargetY - cameraRef.current.y) * CAMERA_LERP;
+
+        setCamera({
+          x: Math.round(cameraRef.current.x),
+          y: Math.round(cameraRef.current.y),
+        });
+      }
+
+      animationFrameRef.current = requestAnimationFrame(gameLoop);
+    };
+
+    animationFrameRef.current = requestAnimationFrame(gameLoop);
+
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [user, users, emit, rooms, setCurrentRoom, clickTarget]);
 
   const handleUserClick = useCallback((clickedUser) => {
     setSelectedUser(clickedUser);
@@ -327,15 +447,17 @@ const CosmosCanvas = ({ emit, socket }) => {
   return (
     <div 
       ref={containerRef}
-      className="w-full h-full overflow-hidden relative bg-cosmos-bg"
+      className="w-full h-full overflow-hidden relative bg-cosmos-bg canvas-clickable"
+      onClick={handleCanvasClick}
     >
       {/* Canvas world */}
       <div
-        className="absolute transition-transform duration-100"
+        className="absolute"
         style={{
           width: CANVAS_WIDTH,
           height: CANVAS_HEIGHT,
           transform: `translate(${-camera.x}px, ${-camera.y}px)`,
+          // No CSS transition - camera is updated via interpolation
         }}
       >
         {/* Background grid */}
@@ -362,6 +484,9 @@ const CosmosCanvas = ({ emit, socket }) => {
           />
         ))}
 
+        {/* Click indicator */}
+        <ClickIndicator position={clickIndicator} />
+
         {/* Rooms */}
         {rooms.map((room) => (
           <Room
@@ -383,6 +508,7 @@ const CosmosCanvas = ({ emit, socket }) => {
             user={otherUser}
             isCurrentUser={false}
             onClick={handleUserClick}
+            interpolatedPosition={interpolatedPositions.current[otherUser.odestined]}
           />
         ))}
 
@@ -392,7 +518,7 @@ const CosmosCanvas = ({ emit, socket }) => {
 
       {/* User context menu */}
       {selectedUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={(e) => e.stopPropagation()}>
           <div className="glass rounded-2xl p-6 w-80">
             <div className="flex items-center gap-4 mb-4">
               <div
@@ -466,8 +592,9 @@ const CosmosCanvas = ({ emit, socket }) => {
 
       {/* Controls hint */}
       <div className="absolute bottom-4 left-4 glass px-4 py-2 rounded-lg text-sm text-gray-400">
-        Use <kbd className="px-1.5 py-0.5 bg-violet-600/30 rounded text-violet-300">Arrow Keys</kbd> or{' '}
-        <kbd className="px-1.5 py-0.5 bg-violet-600/30 rounded text-violet-300">WASD</kbd> to move
+        <kbd className="px-1.5 py-0.5 bg-violet-600/30 rounded text-violet-300">Arrow Keys</kbd> or{' '}
+        <kbd className="px-1.5 py-0.5 bg-violet-600/30 rounded text-violet-300">WASD</kbd> to move •{' '}
+        <kbd className="px-1.5 py-0.5 bg-violet-600/30 rounded text-violet-300">Click</kbd> to walk to location
       </div>
     </div>
   );

@@ -37,7 +37,7 @@ const StatusBar = ({ onCreateRoom, emit }) => {
   return (
     <>
       {/* Top Status Bar */}
-      <div className="absolute top-0 left-0 right-0 h-14 glass-chat border-b border-cyan-500/20 flex items-center justify-between px-4 z-30">
+      <div className="w-full h-14 flex glass-chat border-b border-cyan-500/20 flex items-center justify-between px-4 z-30">
         {/* Left: Logo & User Count */}
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
